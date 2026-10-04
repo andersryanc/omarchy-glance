@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Minimal custom Touch Bar renderer for t1bridge (Touch Bar hardware IPC v1).
+"""Custom Touch Bar renderer for t1bridge (Touch Bar hardware IPC v1).
 
-Draws a solid background with an Esc key on the left. Touching Esc sends a
-KEY_ESC tap through the root service. On the right, a Claude usage widget
-shows the session and weekly limits from the Omarchy agents usage record;
-tapping it toggles the agents panel in the Omarchy bar.
+Base layer: an Esc key on the left (KEY_ESC through the root service) and, on
+the right, a Claude usage widget with the session and weekly limits from the
+Omarchy agents usage record; tapping it toggles the agents panel in the
+Omarchy bar. Holding Fn adds brightness and volume keys next to Esc, which
+run the same Omarchy commands as the keyboard's media keys (so the OSD shows).
 Optionally dims after IDLE_SECONDS without input to spare the OLED panel.
 
 Spec: ~/Work/touchbar/t1bridge-interfaces.md
@@ -16,8 +17,8 @@ import json
 import mmap
 import os
 import select
-import socket
 import signal
+import socket
 import struct
 import subprocess
 import sys
@@ -51,26 +52,44 @@ DEBUG_BG = False
 BG_DEBUG = (0x10, 0x60, 0x90)    # (R, G, B)
 BG_DEBUG_FN = (0x60, 0x20, 0x90)
 BG = (0x00, 0x00, 0x00)
-ESC_BG = (0x30, 0x30, 0x30)      # key face (Esc and the usage widget)
+ESC_BG = (0x30, 0x30, 0x30)      # key face (every key and the usage widget)
 ESC_PRESSED = (0x80, 0x80, 0x80)
 ESC_FG = (0xFF, 0xFF, 0xFF)
 ESC_WIDTH = 140                  # logical px along the long axis
+KEY_PAD = 4                      # inset of each key face inside its slot
 IDLE_SECONDS = 0                 # dim after this long without touches; 0 = never
 DIM = 0.25                       # brightness multiplier while idle
+FONT = "JetBrainsMono Nerd Font"
 
 # Claude usage widget. The record is written by omarchy-agent-usage-update,
 # which the Omarchy bar's agents widget runs every refreshIntervalSec (900 s
 # by default); we only watch the file.
 USAGE_FILE = os.path.expanduser("~/.local/state/omarchy/agents/usage/claude.json")
 USAGE_POLL_SECONDS = 5
-USAGE_ICON = "\U000F16A3"       # the Omarchy bar's agents glyph (Nerd Font)
-FONT = "JetBrainsMono Nerd Font"
+USAGE_ICON = "\U000F16A3"        # the Omarchy bar's agents glyph (Nerd Font)
 METER_WIDTH = 320                # px per progress bar
 METER_ALARM = 0.9                # turn red at this fraction used, like the bar panel
 URGENT = (0xE0, 0x5A, 0x5A)
-# Tapping the widget opens/closes the bar's agents dropdown. Absolute path and
-# OMARCHY_PATH fallback in case the service started before the session env.
-USAGE_TAP = ["/usr/share/omarchy/bin/omarchy-shell", "-q", "omarchy.agents", "toggle"]
+
+# Desktop commands run as the user. Absolute paths, plus PATH/OMARCHY_PATH
+# fallbacks in spawn(), in case the service started before the session env.
+OMARCHY_BIN = "/usr/share/omarchy/bin"
+USAGE_TAP = [f"{OMARCHY_BIN}/omarchy-shell", "-q", "omarchy.agents", "toggle"]
+
+# Fn layer: brightness and volume keys, laid out after Esc. Same commands as
+# the keyboard's media keys in Omarchy's Hyprland bindings.
+FN_KEY_WIDTH = 140
+FN_GROUP_GAP = 40                # space between the brightness and volume groups
+REPEAT_DELAY = 0.4               # holding a key repeats after this ...
+REPEAT_INTERVAL = 0.12           # ... every this many seconds
+FN_KEYS = [
+    # (name, glyph, glyph px, command, repeats, starts a new group)
+    ("brightness-down", "\U000F00DE", 20, [f"{OMARCHY_BIN}/omarchy-brightness-display", "5%-"], True, False),
+    ("brightness-up", "\U000F00DE", 32, [f"{OMARCHY_BIN}/omarchy-brightness-display", "+5%"], True, False),
+    ("mute", "", 30, [f"{OMARCHY_BIN}/omarchy-audio-output-volume", "mute-toggle"], False, True),
+    ("volume-down", "", 30, [f"{OMARCHY_BIN}/omarchy-audio-output-volume", "lower"], True, False),
+    ("volume-up", "", 30, [f"{OMARCHY_BIN}/omarchy-audio-output-volume", "raise"], True, False),
+]
 
 # The panel reports 2170 px along the bar, but only the first 2060 light up
 # (same with the stock renderer; measured 2026-10-04). Lay out within this.
@@ -78,11 +97,12 @@ VISIBLE_WIDTH = 2060
 
 # Orientation of the logical (landscape) canvas relative to the buffer.
 # Flip these if Esc shows up on the wrong end or the label is mirrored.
+# Cairo drawing (everything but Esc and the overlays) assumes no flips.
 FLIP_X = False
 FLIP_Y = False
 
-# Diagnostic overlay: red 2 px border, plus ticks along the bar every 100 px
-# (white, half height), every 500 px (yellow, full height).
+# Diagnostic overlay: ticks along the bar every 100 px (white, half height),
+# every 500 px (yellow, full height), a marker under each finger, touch logging.
 TEST_PATTERN = False
 
 # Red 2 px outline around the visible area (0..VISIBLE_WIDTH).
@@ -100,6 +120,18 @@ def log(*args):
     print("touchbar-renderer:", *args, file=sys.stderr, flush=True)
 
 
+class Button:
+    """A touch target. `layer` is "base", "fn" (only while Fn is held) or "all"."""
+
+    def __init__(self, name, rect, draw, press, layer="all", repeats=False):
+        self.name, self.rect, self.draw, self.press = name, rect, draw, press
+        self.layer, self.repeats = layer, repeats
+
+    def hit(self, x, y):
+        x0, y0, x1, y1 = self.rect
+        return x0 <= x < x1 and y0 <= y < y1
+
+
 class Renderer:
     def __init__(self):
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET)
@@ -107,17 +139,20 @@ class Renderer:
         self.next_req = 1
         self.pending = {}            # req id -> description
         self.buffers = {}            # buffer id -> mmap
+        self.surfaces = {}           # buffer id -> cairo surface over the mmap
         self.free = []               # buffer ids we may draw into
+        self.init_state()
+
+    def init_state(self):
         self.dirty = True
         self.frame_id = 0
-        self.esc_contacts = set()    # contact ids currently pressing Esc
-        self.usage_contacts = set()  # contact ids currently pressing the usage widget
+        self.owner = {}              # contact id -> Button it first touched
+        self.repeat_at = {}          # contact id -> monotonic time of next repeat
         self.last_input = time.monotonic()
         self.dimmed = False
         self.fn = False              # Fn key held
         self.logged_contacts = set()
         self.touch_marks = []        # logical x of current touches (test pattern)
-        self.surfaces = {}           # buffer id -> cairo surface over the mmap
         self.usage_mtime = None
         self.limits = []             # [(label, fraction used)] from the usage record
 
@@ -150,12 +185,9 @@ class Renderer:
         self.pending.pop(req, None)
         if mtype == ERROR:
             raise RuntimeError("hello rejected: " + ERRORS.get(struct.unpack("<I", payload)[0], "?"))
-        minor, _, self.w, self.h, fmt, max_buffers = struct.unpack("<HHIIII", payload)
-        self.stride = self.w * 4
-        self.portrait = self.h > self.w
-        self.long, self.short = max(self.w, self.h), min(self.w, self.h)
-        self.visible = min(self.long, VISIBLE_WIDTH)   # usable length for layout
-        log(f"connected: minor={minor} {self.w}x{self.h} fmt={fmt} max_buffers={max_buffers}")
+        minor, _, w, h, fmt, max_buffers = struct.unpack("<HHIIII", payload)
+        log(f"connected: minor={minor} {w}x{h} fmt={fmt} max_buffers={max_buffers}")
+        self.set_geometry(w, h)
 
         for buf_id in range(1, min(2, max_buffers) + 1):
             size = self.stride * self.h
@@ -164,14 +196,42 @@ class Renderer:
             fcntl.fcntl(fd, fcntl.F_ADD_SEALS,
                         fcntl.F_SEAL_SHRINK | fcntl.F_SEAL_GROW | fcntl.F_SEAL_SEAL)
             self.buffers[buf_id] = mmap.mmap(fd, size, mmap.MAP_SHARED, mmap.PROT_READ | mmap.PROT_WRITE)
-            # Cairo's RGB24 is the same little-endian XRGB8888 the service wants.
-            if cairo.ImageSurface.format_stride_for_width(cairo.FORMAT_RGB24, self.w) == self.stride:
-                self.surfaces[buf_id] = cairo.ImageSurface.create_for_data(
-                    self.buffers[buf_id], cairo.FORMAT_RGB24, self.w, self.h, self.stride)
+            self.add_surface(buf_id)
             self.send(REGISTER_BUFFER, struct.pack("<IIQ", buf_id, self.stride, size),
                       fds=[fd], what=f"register buffer {buf_id}")
             os.close(fd)
             self.free.append(buf_id)
+
+    def set_geometry(self, w, h):
+        self.w, self.h = w, h
+        self.stride = w * 4
+        self.portrait = h > w
+        self.long, self.short = max(w, h), min(w, h)
+        self.visible = min(self.long, VISIBLE_WIDTH)   # usable length for layout
+        self.buttons = self.layout()
+
+    def add_surface(self, buf_id):
+        # Cairo's RGB24 is the same little-endian XRGB8888 the service wants.
+        if cairo.ImageSurface.format_stride_for_width(cairo.FORMAT_RGB24, self.w) == self.stride:
+            self.surfaces[buf_id] = cairo.ImageSurface.create_for_data(
+                self.buffers[buf_id], cairo.FORMAT_RGB24, self.w, self.h, self.stride)
+
+    def layout(self):
+        buttons = [Button("esc", (0, 0, ESC_WIDTH, self.short), None,
+                          lambda: self.send(TAP_KEYS, struct.pack("<B3xHHHH", 1, KEY_ESC, 0, 0, 0),
+                                            what="tap esc"))]
+        x = ESC_WIDTH
+        for name, glyph, size, argv, repeats, new_group in FN_KEYS:
+            if new_group:
+                x += FN_GROUP_GAP
+            buttons.append(Button(name, (x, 0, x + FN_KEY_WIDTH, self.short),
+                                  lambda cr, b, g=glyph, size=size: self.draw_glyph_key(cr, b, g, size),
+                                  lambda argv=argv: self.spawn(argv),
+                                  layer="fn", repeats=repeats))
+            x += FN_KEY_WIDTH
+        buttons.append(Button("usage", self.usage_rect(), self.draw_usage,
+                              lambda: self.spawn(USAGE_TAP), layer="base"))
+        return buttons
 
     # --- coordinates --------------------------------------------------------
     def to_logical(self, x, y):
@@ -201,20 +261,48 @@ class Renderer:
             off = by * self.stride + bx0 * 4
             buf[off:off + len(row)] = row
 
-    # --- drawing ------------------------------------------------------------
-    def esc_rect(self):
-        return 0, 0, ESC_WIDTH, self.short
+    # --- state --------------------------------------------------------------
+    def fn_layer(self):
+        """Fn keys stay up while a finger is still on one, even if Fn is let go."""
+        return self.fn or any(b.layer == "fn" for b in self.owner.values())
 
+    def visible_buttons(self):
+        hidden = "base" if self.fn_layer() else "fn"
+        return [b for b in self.buttons if b.layer != hidden]
+
+    def pressed(self, button):
+        return button in self.owner.values()
+
+    # --- drawing ------------------------------------------------------------
     def draw(self, buf):
         if DEBUG_BG:
             bg = BG_DEBUG_FN if self.fn else BG_DEBUG
         else:
             bg = BG
         self.fill(buf, 0, 0, self.long, self.short, bg)
-        x0, y0, x1, y1 = self.esc_rect()
-        pad = 4
+        buttons = self.visible_buttons()
+        for b in buttons:
+            if b.name == "esc":
+                self.draw_esc(buf, b)
+        surface = self.surfaces.get(self.drawing)
+        if surface and not self.portrait and not FLIP_X and not FLIP_Y:
+            surface.mark_dirty()     # we wrote pixels behind cairo's back
+            cr = cairo.Context(surface)
+            cr.select_font_face(FONT)
+            for b in buttons:
+                if b.draw:
+                    b.draw(cr, b)
+            surface.flush()
+        if TEST_PATTERN:
+            self.draw_test_pattern(buf)
+        if SHOW_BORDER or TEST_PATTERN:
+            self.draw_border(buf)
+
+    def draw_esc(self, buf, b):
+        x0, y0, x1, y1 = b.rect
+        pad = KEY_PAD
         self.fill(buf, x0 + pad, y0 + pad, x1 - pad, y1 - pad,
-                  ESC_PRESSED if self.esc_contacts else ESC_BG)
+                  ESC_PRESSED if self.pressed(b) else ESC_BG)
         # "esc" label, 5x7 glyphs scaled
         scale = max(1, (self.short - 2 * pad) // 14)
         text = "esc"
@@ -228,16 +316,6 @@ class Renderer:
                         lx = tx + (i * 6 + gx) * scale
                         ly = ty + gy * scale
                         self.fill(buf, lx, ly, lx + scale, ly + scale, ESC_FG)
-        surface = self.surfaces.get(self.drawing)
-        if surface and not self.portrait and not FLIP_X and not FLIP_Y:
-            surface.mark_dirty()     # we wrote pixels behind cairo's back
-            cr = cairo.Context(surface)
-            self.draw_usage(cr)
-            surface.flush()
-        if TEST_PATTERN:
-            self.draw_test_pattern(buf)
-        if SHOW_BORDER or TEST_PATTERN:
-            self.draw_border(buf)
 
     def color(self, rgb, alpha=1.0):
         k = DIM if self.dimmed else 1.0
@@ -251,38 +329,44 @@ class Renderer:
         cr.arc(x + r, y + r, r, 3.1416, 4.7124)
         cr.close_path()
 
+    def draw_key_face(self, cr, b):
+        x0, y0, x1, y1 = b.rect
+        p = KEY_PAD
+        cr.rectangle(x0 + p, y0 + p, x1 - x0 - 2 * p, y1 - y0 - 2 * p)
+        cr.set_source_rgba(*self.color(ESC_PRESSED if self.pressed(b) else ESC_BG))
+        cr.fill()
+
+    def draw_glyph(self, cr, glyph, cx, cy, size):
+        cr.set_font_size(size)
+        ext = cr.text_extents(glyph)
+        cr.move_to(cx - ext.width / 2 - ext.x_bearing, cy - ext.height / 2 - ext.y_bearing)
+        cr.set_source_rgba(*self.color(ESC_FG))
+        cr.show_text(glyph)
+
+    def draw_glyph_key(self, cr, b, glyph, size):
+        self.draw_key_face(cr, b)
+        x0, y0, x1, y1 = b.rect
+        self.draw_glyph(cr, glyph, (x0 + x1) / 2, (y0 + y1) / 2, size)
+
     def usage_limits(self):
         return self.limits or [("Session", None), ("Weekly", None)]
 
     def usage_rect(self):
-        pad, n = 4, len(self.usage_limits())
-        width = 14 + 30 + 14 + n * METER_WIDTH + (n - 1) * 24 + 16
-        x0 = self.visible - pad - width
-        return x0, pad, x0 + width, self.short - pad
+        n = len(self.usage_limits())
+        width = 14 + 30 + 14 + n * METER_WIDTH + (n - 1) * 24 + 16 + 2 * KEY_PAD
+        return self.visible - width, 0, self.visible, self.short
 
-    def draw_usage(self, cr):
-        """Container at the right end: agents icon, then one meter per limit."""
+    def draw_usage(self, cr, b):
+        """Key-style container: agents icon, then one meter per limit."""
         gap, icon_w = 24, 30
-        limits = self.usage_limits()
-        x0, y0, x1, y1 = self.usage_rect()
+        self.draw_key_face(cr, b)
+        x0 = b.rect[0] + KEY_PAD
         white = (0xFF, 0xFF, 0xFF)
-
-        # same key style as Esc, so it stands on its own without a background
-        cr.rectangle(x0, y0, x1 - x0, y1 - y0)
-        cr.set_source_rgba(*self.color(ESC_PRESSED if self.usage_contacts else ESC_BG))
-        cr.fill()
-
-        cr.select_font_face(FONT)
-        cr.set_font_size(30)
-        ext = cr.text_extents(USAGE_ICON)
-        cr.move_to(x0 + 14 + (icon_w - ext.width) / 2 - ext.x_bearing,
-                   self.short / 2 - ext.height / 2 - ext.y_bearing)
-        cr.set_source_rgba(*self.color(white))
-        cr.show_text(USAGE_ICON)
+        self.draw_glyph(cr, USAGE_ICON, x0 + 14 + icon_w / 2, self.short / 2, 30)
 
         cr.set_font_size(15)
         x = x0 + 14 + icon_w + 14
-        for label, frac in limits:
+        for label, frac in self.usage_limits():
             alarm = frac is not None and frac >= METER_ALARM
             cr.set_source_rgba(*self.color(white))
             cr.move_to(x, 25)
@@ -303,6 +387,35 @@ class Renderer:
                 cr.fill()
             x += METER_WIDTH + gap
 
+    def draw_border(self, buf, b=2, red=(0xFF, 0, 0)):
+        v = self.visible
+        self.fill(buf, 0, 0, v, b, red)
+        self.fill(buf, 0, self.short - b, v, self.short, red)
+        self.fill(buf, 0, 0, b, self.short, red)
+        self.fill(buf, v - b, 0, v, self.short, red)
+
+    def draw_test_pattern(self, buf):
+        white, yellow = (0xFF, 0xFF, 0xFF), (0xFF, 0xFF, 0)
+        for x in range(100, self.long, 100):
+            if x % 500 == 0:
+                self.fill(buf, x - 1, 0, x + 1, self.short, yellow)
+            else:
+                self.fill(buf, x - 1, 0, x + 1, self.short // 2, white)
+        for x in self.touch_marks:   # white bar under each finger
+            self.fill(buf, x - 3, 0, x + 3, self.short, white)
+
+    def present(self):
+        if not self.dirty or not self.free:
+            return
+        buf_id = self.free.pop(0)
+        self.drawing = buf_id
+        self.draw(self.buffers[buf_id])
+        self.frame_id += 1
+        self.send(SUBMIT_FRAME, struct.pack("<IQI", buf_id, self.frame_id, 0),
+                  what=f"submit frame {self.frame_id}")
+        self.dirty = False
+
+    # --- usage record -------------------------------------------------------
     def poll_usage(self):
         try:
             mtime = os.stat(USAGE_FILE).st_mtime_ns
@@ -325,100 +438,74 @@ class Renderer:
                 log(f"unreadable usage record: {e}")
         if limits != self.limits:
             self.limits = limits
+            self.relayout()
             self.dirty = True
 
-    def draw_border(self, buf, b=2, red=(0xFF, 0, 0)):
-        v = self.visible
-        self.fill(buf, 0, 0, v, b, red)
-        self.fill(buf, 0, self.short - b, v, self.short, red)
-        self.fill(buf, 0, 0, b, self.short, red)
-        self.fill(buf, v - b, 0, v, self.short, red)
-
-    def draw_test_pattern(self, buf):
-        red, white, yellow = (0xFF, 0, 0), (0xFF, 0xFF, 0xFF), (0xFF, 0xFF, 0)
-        for x in range(100, self.long, 100):
-            if x % 500 == 0:
-                self.fill(buf, x - 1, 0, x + 1, self.short, yellow)
-            else:
-                self.fill(buf, x - 1, 0, x + 1, self.short // 2, white)
-        # 4 px colour bands from 2040 to 2060, to find the exact visible edge
-        bands = [(0xFF, 0, 0), (0xFF, 0x80, 0), (0xFF, 0xFF, 0), (0, 0xFF, 0), (0, 0xFF, 0xFF)]
-        for i, color in enumerate(bands):
-            x0 = 2040 + i * 4
-            self.fill(buf, x0, self.short // 2, x0 + 4, self.short, color)
-        for x in self.touch_marks:   # white bar under each finger
-            self.fill(buf, x - 3, 0, x + 3, self.short, white)
-
-    def present(self):
-        if not self.dirty or not self.free:
-            return
-        buf_id = self.free.pop(0)
-        self.drawing = buf_id
-        self.draw(self.buffers[buf_id])
-        self.frame_id += 1
-        self.send(SUBMIT_FRAME, struct.pack("<IQI", buf_id, self.frame_id, 0),
-                  what=f"submit frame {self.frame_id}")
-        self.dirty = False
+    def relayout(self):
+        """Rebuild buttons (the usage widget's width follows the limit count),
+        keeping each finger attached to the rebuilt version of its button."""
+        old = {id(b): b.name for b in self.buttons}
+        self.buttons = self.layout()
+        by_name = {b.name: b for b in self.buttons}
+        self.owner = {cid: by_name[old[id(b)]] for cid, b in self.owner.items()}
 
     # --- events -------------------------------------------------------------
     def on_input(self, payload):
         _ns, fn, count, _ = struct.unpack_from("<QBBH", payload)
-        if bool(fn) != self.fn:
-            self.fn = bool(fn)
-            self.dirty = True
-        # A contact belongs to whatever it first touched until it lifts.
-        esc, usage = set(), set()
+        before = (self.fn, self.fn_layer(), set(self.owner.values()))
+        self.fn = bool(fn)
+
+        touching = {}
         for i in range(count):
             cid, tip, in_range, _, x, y = struct.unpack_from("<BBBBII", payload, 12 + i * 12)
-            if not tip:
-                continue
-            lx, ly = self.to_logical(x, y)
+            if tip:
+                touching[cid] = self.to_logical(x, y)
+
+        # A contact belongs to whatever it first touched until it lifts.
+        for cid in list(self.owner):
+            if cid not in touching:
+                del self.owner[cid]
+                self.repeat_at.pop(cid, None)
+        now = time.monotonic()
+        for cid, (lx, ly) in touching.items():
             if TEST_PATTERN and cid not in self.logged_contacts:
                 log(f"touch down id={cid} x={lx} y={ly}")
-            if cid in self.esc_contacts:
-                esc.add(cid)
-            elif cid in self.usage_contacts:
-                usage.add(cid)
-            elif self.hit(self.esc_rect(), lx, ly):
-                esc.add(cid)
-            elif self.hit(self.usage_rect(), lx, ly):
-                usage.add(cid)
-        if esc - self.esc_contacts:
-            self.send(TAP_KEYS, struct.pack("<B3xHHHH", 1, KEY_ESC, 0, 0, 0), what="tap esc")
-        if usage - self.usage_contacts:
-            self.spawn(USAGE_TAP)
-        if usage != self.usage_contacts:
-            self.usage_contacts = usage
-            self.dirty = True
-        now_pressing = esc
+            if cid in self.owner:
+                continue
+            button = next((b for b in self.visible_buttons() if b.hit(lx, ly)), None)
+            if button:
+                self.owner[cid] = button
+                button.press()
+                if button.repeats:
+                    self.repeat_at[cid] = now + REPEAT_DELAY
+
         if TEST_PATTERN:
-            marks = []
-            for i in range(count):
-                _, tip, _, _, x, y = struct.unpack_from("<BBBBII", payload, 12 + i * 12)
-                if tip:
-                    marks.append(self.to_logical(x, y)[0])
+            self.logged_contacts = set(touching)
+            marks = [lx for lx, _ in touching.values()]
             if marks != self.touch_marks:
                 self.touch_marks = marks
                 self.dirty = True
-            self.logged_contacts = {struct.unpack_from("<B", payload, 12 + i * 12)[0] for i in range(count)}
-        if now_pressing != self.esc_contacts:
-            self.esc_contacts = now_pressing
+        after = (self.fn, self.fn_layer(), set(self.owner.values()))
+        if after[1:] != before[1:] or (DEBUG_BG and after[0] != before[0]):
             self.dirty = True
         if count:
-            self.last_input = time.monotonic()
+            self.last_input = now
             if self.dimmed:
                 self.dimmed = False
                 self.dirty = True
 
-    @staticmethod
-    def hit(rect, x, y):
-        x0, y0, x1, y1 = rect
-        return x0 <= x < x1 and y0 <= y < y1
+    def run_repeats(self, now):
+        for cid, due in list(self.repeat_at.items()):
+            if now >= due:
+                self.owner[cid].press()
+                self.repeat_at[cid] = max(due + REPEAT_INTERVAL, now)
 
     def spawn(self, argv):
         """Run a desktop command without blocking the render loop."""
         env = dict(os.environ)
         env.setdefault("OMARCHY_PATH", "/usr/share/omarchy")
+        if OMARCHY_BIN not in env.get("PATH", "").split(":"):
+            env["PATH"] = OMARCHY_BIN + ":" + env.get("PATH", "/usr/bin")
         try:
             subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
@@ -448,14 +535,16 @@ class Renderer:
             if now >= next_poll:
                 self.poll_usage()
                 next_poll = now + USAGE_POLL_SECONDS
+            self.run_repeats(now)
             if IDLE_SECONDS > 0 and not self.dimmed and now >= self.last_input + IDLE_SECONDS:
                 self.dimmed = True
                 self.dirty = True
             self.present()
-            timeout = next_poll - now
+            deadlines = [next_poll, *self.repeat_at.values()]
             if IDLE_SECONDS > 0 and not self.dimmed:
-                timeout = min(timeout, self.last_input + IDLE_SECONDS - now)
-            ready, _, _ = select.select([self.sock], [], [], max(0.0, timeout))
+                deadlines.append(self.last_input + IDLE_SECONDS)
+            timeout = max(0.0, min(deadlines) - now)
+            ready, _, _ = select.select([self.sock], [], [], timeout)
             if ready:
                 self.handle(*self.recv())
 

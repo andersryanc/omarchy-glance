@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Custom Touch Bar renderer for t1bridge (Touch Bar hardware IPC v1).
 
-Base layer: an Esc key on the left (KEY_ESC through the root service) and, on
-the right, a Claude usage widget with the session and weekly limits from the
-Omarchy agents usage record; tapping it toggles the agents panel in the
-Omarchy bar. Holding Fn adds brightness and volume keys next to Esc, which
-run the same Omarchy commands as the keyboard's media keys (so the OSD shows).
-Optionally dims after IDLE_SECONDS without input to spare the OLED panel.
+The bar is built from ~/.config/touchbar/config.json (or config.default.json
+next to this script when there is none) and reloads when that file changes.
+A config has two layers, "default" and "fn" (shown while Fn is held), each
+with left/center/right lists of widgets, like the Omarchy bar's shell.json.
+See README.md for the format.
 
 Spec: ~/Work/touchbar/t1bridge-interfaces.md
 """
@@ -17,7 +16,6 @@ import json
 import mmap
 import os
 import select
-import signal
 import socket
 import struct
 import subprocess
@@ -27,6 +25,11 @@ import time
 import cairo
 
 SOCK_PATH = "/run/t1bridge/touchbar.sock"
+HERE = os.path.dirname(os.path.realpath(__file__))
+DEFAULT_CONFIG = os.path.join(HERE, "config.default.json")
+USER_CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
+                           "touchbar", "config.json")
+POLL_SECONDS = 1                 # how often to check the config and usage files
 
 # --- protocol constants -----------------------------------------------------
 MAGIC = b"T1HW"
@@ -38,59 +41,16 @@ HELLO_ACK, ACK, ERROR = 0x8001, 0x8002, 0x8003
 FRAME_RELEASED, INPUT_FRAME = 0x9001, 0x9002
 
 FEAT_MEMFD, FEAT_INPUT, FEAT_KEYS = 0x01, 0x02, 0x04
-KEY_ESC = 1
+
+# Keys the service will tap for us (minor 0): Esc, F1-F12.
+KEYCODES = {"esc": 1, **{f"f{n}": 58 + n for n in range(1, 11)}, "f11": 87, "f12": 88}
 
 ERRORS = {1: "unsupported message", 2: "unsupported feature", 3: "resource limit",
           4: "invalid buffer", 5: "unknown buffer", 6: "buffer busy",
           7: "action denied", 8: "device unavailable", 9: "I/O failure",
           10: "internal failure"}
 
-# --- look and feel ----------------------------------------------------------
-# Debug background: blue, purple while Fn is held. Off = black, which also
-# leaves those OLED pixels switched off.
-DEBUG_BG = False
-BG_DEBUG = (0x10, 0x60, 0x90)    # (R, G, B)
-BG_DEBUG_FN = (0x60, 0x20, 0x90)
-BG = (0x00, 0x00, 0x00)
-ESC_BG = (0x30, 0x30, 0x30)      # key face (every key and the usage widget)
-ESC_PRESSED = (0x80, 0x80, 0x80)
-ESC_FG = (0xFF, 0xFF, 0xFF)
-ESC_WIDTH = 140                  # logical px along the long axis
-KEY_PAD = 4                      # inset of each key face inside its slot
-IDLE_SECONDS = 0                 # dim after this long without touches; 0 = never
-DIM = 0.25                       # brightness multiplier while idle
-FONT = "JetBrainsMono Nerd Font"
-
-# Claude usage widget. The record is written by omarchy-agent-usage-update,
-# which the Omarchy bar's agents widget runs every refreshIntervalSec (900 s
-# by default); we only watch the file.
-USAGE_FILE = os.path.expanduser("~/.local/state/omarchy/agents/usage/claude.json")
-USAGE_POLL_SECONDS = 5
-USAGE_ICON = "\U000F16A3"        # the Omarchy bar's agents glyph (Nerd Font)
-METER_WIDTH = 320                # px per progress bar
-METER_ALARM = 0.9                # turn red at this fraction used, like the bar panel
-URGENT = (0xE0, 0x5A, 0x5A)
-
-# Desktop commands run as the user. Absolute paths, plus PATH/OMARCHY_PATH
-# fallbacks in spawn(), in case the service started before the session env.
-OMARCHY_BIN = "/usr/share/omarchy/bin"
-USAGE_TAP = [f"{OMARCHY_BIN}/omarchy-shell", "-q", "omarchy.agents", "toggle"]
-
-# Fn layer: brightness and volume keys, laid out after Esc. Same commands as
-# the keyboard's media keys in Omarchy's Hyprland bindings.
-FN_KEY_WIDTH = 140
-FN_GROUP_GAP = 40                # space between the brightness and volume groups
-REPEAT_DELAY = 0.4               # holding a key repeats after this ...
-REPEAT_INTERVAL = 0.12           # ... every this many seconds
-FN_KEYS = [
-    # (name, glyph, glyph px, command, repeats, starts a new group)
-    ("brightness-down", "\U000F00DE", 20, [f"{OMARCHY_BIN}/omarchy-brightness-display", "5%-"], True, False),
-    ("brightness-up", "\U000F00DE", 32, [f"{OMARCHY_BIN}/omarchy-brightness-display", "+5%"], True, False),
-    ("mute", "", 30, [f"{OMARCHY_BIN}/omarchy-audio-output-volume", "mute-toggle"], False, True),
-    ("volume-down", "", 30, [f"{OMARCHY_BIN}/omarchy-audio-output-volume", "lower"], True, False),
-    ("volume-up", "", 30, [f"{OMARCHY_BIN}/omarchy-audio-output-volume", "raise"], True, False),
-]
-
+# --- hardware facts and widget metrics ---------------------------------------
 # The panel reports 2170 px along the bar, but only the first 2060 light up
 # (same with the stock renderer; measured 2026-10-04). Lay out within this.
 VISIBLE_WIDTH = 2060
@@ -101,12 +61,15 @@ VISIBLE_WIDTH = 2060
 FLIP_X = False
 FLIP_Y = False
 
-# Diagnostic overlay: ticks along the bar every 100 px (white, half height),
-# every 500 px (yellow, full height), a marker under each finger, touch logging.
-TEST_PATTERN = False
-
-# Red 2 px outline around the visible area (0..VISIBLE_WIDTH).
-SHOW_BORDER = False
+KEY_WIDTH = 140                  # default width of Esc and buttons
+KEY_PAD = 4                      # inset of each key face inside its slot
+DIM = 0.25                       # brightness multiplier while idle
+COMMAND_TIMEOUT = 10             # kill a command widget's script after this long
+OMARCHY_BIN = "/usr/share/omarchy/bin"
+AGENTS_TOGGLE = "omarchy-shell -q omarchy.agents toggle"
+USAGE_DIR = os.path.expanduser("~/.local/state/omarchy/agents/usage")
+USAGE_ICON = "\U000F16A3"        # the Omarchy bar's agents glyph (Nerd Font)
+METER_ALARM = 0.9                # turn red at this fraction used, like the bar panel
 
 # 5x7 glyphs for the Esc label
 GLYPHS = {
@@ -120,12 +83,61 @@ def log(*args):
     print("touchbar-renderer:", *args, file=sys.stderr, flush=True)
 
 
-class Button:
-    """A touch target. `layer` is "base", "fn" (only while Fn is held) or "all"."""
+def hex_rgb(value, fallback):
+    try:
+        v = value.lstrip("#")
+        return tuple(int(v[i:i + 2], 16) for i in (0, 2, 4)) if len(v) == 6 else fallback
+    except (AttributeError, ValueError):
+        return fallback
 
-    def __init__(self, name, rect, draw, press, layer="all", repeats=False):
-        self.name, self.rect, self.draw, self.press = name, rect, draw, press
-        self.layer, self.repeats = layer, repeats
+
+class Config:
+    """A validated view of one config file."""
+
+    def __init__(self, data):
+        if not isinstance(data, dict) or data.get("version") != 1:
+            raise ValueError('expected an object with "version": 1')
+        debug = data.get("debug") or {}
+        colors = data.get("colors") or {}
+        self.debug_background = bool(debug.get("background"))
+        self.test_pattern = bool(debug.get("testPattern"))
+        self.border = bool(debug.get("border"))
+        self.background = hex_rgb(colors.get("background"), (0, 0, 0))
+        self.debug_bg = hex_rgb(colors.get("debugBackground"), (0x10, 0x60, 0x90))
+        self.debug_bg_fn = hex_rgb(colors.get("debugBackgroundFn"), (0x60, 0x20, 0x90))
+        self.key = hex_rgb(colors.get("key"), (0x30, 0x30, 0x30))
+        self.key_pressed = hex_rgb(colors.get("keyPressed"), (0x80, 0x80, 0x80))
+        self.text = hex_rgb(colors.get("text"), (0xFF, 0xFF, 0xFF))
+        self.urgent = hex_rgb(colors.get("urgent"), (0xE0, 0x5A, 0x5A))
+        self.font = str(data.get("font") or "JetBrainsMono Nerd Font")
+        self.idle_dim = float(data.get("idleDimSeconds") or 0)
+        self.repeat_delay = float(data.get("repeatDelay", 0.4))
+        self.repeat_interval = max(0.03, float(data.get("repeatInterval", 0.12)))
+        layers = data.get("layers")
+        if not isinstance(layers, dict) or not isinstance(layers.get("default"), dict):
+            raise ValueError('"layers" needs at least a "default" layer')
+        self.layers = {}
+        for name in ("default", "fn"):
+            layer = layers.get(name) or {}
+            if not isinstance(layer, dict):
+                raise ValueError(f'layer "{name}" must be an object')
+            sections = {}
+            for section in ("left", "center", "right"):
+                items = layer.get(section) or []
+                if not isinstance(items, list) or not all(isinstance(i, dict) for i in items):
+                    raise ValueError(f'"layers.{name}.{section}" must be a list of objects')
+                sections[section] = items
+            self.layers[name] = sections
+        self.has_fn = any(self.layers["fn"].values())
+
+
+class Widget:
+    """One placed widget. `kind` is esc, button, command, agents or spacer."""
+
+    def __init__(self, key, layer, kind, spec):
+        self.key, self.layer, self.kind, self.spec = key, layer, kind, spec
+        self.rect = (0, 0, 0, 0)
+        self.repeats = kind == "button" and bool(spec.get("repeat"))
 
     def hit(self, x, y):
         x0, y0, x1, y1 = self.rect
@@ -146,15 +158,21 @@ class Renderer:
     def init_state(self):
         self.dirty = True
         self.frame_id = 0
-        self.owner = {}              # contact id -> Button it first touched
+        self.widgets = []
+        self.owner = {}              # contact id -> Widget it first touched
         self.repeat_at = {}          # contact id -> monotonic time of next repeat
         self.last_input = time.monotonic()
         self.dimmed = False
         self.fn = False              # Fn key held
         self.logged_contacts = set()
         self.touch_marks = []        # logical x of current touches (test pattern)
-        self.usage_mtime = None
-        self.limits = []             # [(label, fraction used)] from the usage record
+        self.usage = {}              # agent -> (mtime, [(label, fraction used)])
+        self.commands = {}           # widget key -> command widget state
+        self.children = []           # fire-and-forget processes to reap
+        self.config_source = None    # (path, mtime) of the loaded config
+        self.config = None
+        # scratch context for measuring text outside a frame
+        self.measure = cairo.Context(cairo.ImageSurface(cairo.FORMAT_RGB24, 1, 1))
 
     # --- wire helpers -------------------------------------------------------
     def send(self, mtype, payload=b"", fds=None, what=""):
@@ -208,7 +226,6 @@ class Renderer:
         self.portrait = h > w
         self.long, self.short = max(w, h), min(w, h)
         self.visible = min(self.long, VISIBLE_WIDTH)   # usable length for layout
-        self.buttons = self.layout()
 
     def add_surface(self, buf_id):
         # Cairo's RGB24 is the same little-endian XRGB8888 the service wants.
@@ -216,22 +233,93 @@ class Renderer:
             self.surfaces[buf_id] = cairo.ImageSurface.create_for_data(
                 self.buffers[buf_id], cairo.FORMAT_RGB24, self.w, self.h, self.stride)
 
-    def layout(self):
-        buttons = [Button("esc", (0, 0, ESC_WIDTH, self.short), None,
-                          lambda: self.send(TAP_KEYS, struct.pack("<B3xHHHH", 1, KEY_ESC, 0, 0, 0),
-                                            what="tap esc"))]
-        x = ESC_WIDTH
-        for name, glyph, size, argv, repeats, new_group in FN_KEYS:
-            if new_group:
-                x += FN_GROUP_GAP
-            buttons.append(Button(name, (x, 0, x + FN_KEY_WIDTH, self.short),
-                                  lambda cr, b, g=glyph, size=size: self.draw_glyph_key(cr, b, g, size),
-                                  lambda argv=argv: self.spawn(argv),
-                                  layer="fn", repeats=repeats))
-            x += FN_KEY_WIDTH
-        buttons.append(Button("usage", self.usage_rect(), self.draw_usage,
-                              lambda: self.spawn(USAGE_TAP), layer="base"))
-        return buttons
+    # --- config -------------------------------------------------------------
+    def poll_config(self):
+        path = USER_CONFIG if os.path.exists(USER_CONFIG) else DEFAULT_CONFIG
+        try:
+            source = (path, os.stat(path).st_mtime_ns)
+        except OSError:
+            source = (path, None)
+        if source == self.config_source:
+            return
+        self.config_source = source
+        try:
+            with open(path, encoding="utf-8") as f:
+                config = Config(json.load(f))
+        except (OSError, ValueError, TypeError) as e:
+            log(f"{path}: {e}; " + ("keeping the previous config" if self.config else "using the default"))
+            if self.config:
+                return
+            with open(DEFAULT_CONFIG, encoding="utf-8") as f:
+                config = Config(json.load(f))
+        log(f"loaded {path}")
+        self.config = config
+        for state in self.commands.values():
+            if state.get("proc"):
+                state["proc"].kill()
+        self.commands = {}
+        self.owner, self.repeat_at = {}, {}
+        self.build()
+        self.dirty = True
+
+    def build(self):
+        """Create and place the widgets of both layers from the config."""
+        self.widgets = []
+        for layer, sections in self.config.layers.items():
+            for section, items in sections.items():
+                placed = []
+                for i, spec in enumerate(items):
+                    kind = self.kind_of(spec)
+                    if kind is None:
+                        log(f"layers.{layer}.{section}[{i}]: unknown widget {spec.get('id')!r}")
+                        continue
+                    placed.append(Widget(f"{layer}.{section}.{i}", layer, kind, spec))
+                self.place(placed, section)
+                self.widgets += placed
+        for w in self.widgets:
+            if w.kind == "command" and w.key not in self.commands:
+                self.commands[w.key] = {"text": "", "urgent": False, "next": 0.0,
+                                        "proc": None, "out": b"", "started": 0.0}
+
+    def relayout(self):
+        """Re-place widgets after a width change, keeping fingers attached."""
+        by_key = {w.key: w for w in self.widgets}
+        for layer, sections in self.config.layers.items():
+            for section in sections:
+                prefix = f"{layer}.{section}."
+                self.place([w for w in self.widgets if w.key.startswith(prefix)], section)
+        self.owner = {cid: by_key[w.key] for cid, w in self.owner.items()}
+        self.dirty = True
+
+    @staticmethod
+    def kind_of(spec):
+        t = spec.get("type")
+        if t in ("button", "command"):
+            return t
+        return {"touchbar.esc": "esc", "touchbar.agents": "agents",
+                "touchbar.spacer": "spacer"}.get(spec.get("id"))
+
+    def place(self, widgets, section):
+        widths = [self.width_of(w) for w in widgets]
+        total = sum(widths)
+        x = {"left": 0, "center": (self.visible - total) // 2, "right": self.visible - total}[section]
+        for w, width in zip(widgets, widths):
+            w.rect = (x, 0, x + width, self.short)
+            x += width
+
+    def width_of(self, w):
+        s = w.spec
+        if w.kind == "spacer":
+            return int(s.get("size", 40))
+        if w.kind == "agents":
+            n = len(self.limits_for(w))
+            return 14 + 30 + 14 + n * self.meter_width(w) + (n - 1) * 24 + 16 + 2 * KEY_PAD
+        if w.kind == "command" and not s.get("width"):
+            text = self.commands.get(w.key, {}).get("text", "")
+            self.measure.select_font_face(self.config.font)
+            self.measure.set_font_size(float(s.get("fontSize", 18)))
+            return max(KEY_WIDTH // 2, int(self.measure.text_extents(text).x_advance) + 32 + 2 * KEY_PAD)
+        return int(s.get("width", KEY_WIDTH))
 
     # --- coordinates --------------------------------------------------------
     def to_logical(self, x, y):
@@ -263,46 +351,190 @@ class Renderer:
 
     # --- state --------------------------------------------------------------
     def fn_layer(self):
-        """Fn keys stay up while a finger is still on one, even if Fn is let go."""
-        return self.fn or any(b.layer == "fn" for b in self.owner.values())
+        """The Fn layer stays up while a finger is still on one of its widgets."""
+        return self.config.has_fn and (self.fn or any(w.layer == "fn" for w in self.owner.values()))
 
-    def visible_buttons(self):
-        hidden = "base" if self.fn_layer() else "fn"
-        return [b for b in self.buttons if b.layer != hidden]
+    def visible_widgets(self):
+        layer = "fn" if self.fn_layer() else "default"
+        return [w for w in self.widgets if w.layer == layer]
 
-    def pressed(self, button):
-        return button in self.owner.values()
+    def pressed(self, widget):
+        return widget in self.owner.values()
+
+    # --- actions ------------------------------------------------------------
+    def press(self, w):
+        s = w.spec
+        if w.kind == "esc":
+            self.tap_key("esc")
+        elif w.kind == "button":
+            if s.get("key"):
+                self.tap_key(str(s["key"]).lower())
+            elif s.get("exec"):
+                self.spawn(s["exec"])
+        elif w.kind == "agents":
+            cmd = s.get("onTap", AGENTS_TOGGLE)
+            if cmd:
+                self.spawn(cmd)
+        elif w.kind == "command" and s.get("onTap"):
+            self.spawn(s["onTap"])
+
+    def tap_key(self, name):
+        code = KEYCODES.get(name)
+        if code is None:
+            log(f"unsupported key {name!r}; the service allows esc and f1-f12")
+            return
+        self.send(TAP_KEYS, struct.pack("<B3xHHHH", 1, code, 0, 0, 0), what=f"tap {name}")
+
+    def command_env(self):
+        env = dict(os.environ)
+        # in case the service started before the session environment was imported
+        env.setdefault("OMARCHY_PATH", "/usr/share/omarchy")
+        if OMARCHY_BIN not in env.get("PATH", "").split(":"):
+            env["PATH"] = OMARCHY_BIN + ":" + env.get("PATH", "/usr/bin")
+        return env
+
+    def spawn(self, cmd):
+        """Run a shell command without blocking the render loop."""
+        try:
+            self.children.append(subprocess.Popen(
+                ["bash", "-c", cmd], env=self.command_env(), stdin=subprocess.DEVNULL,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True))
+        except OSError as e:
+            log(f"could not run {cmd!r}: {e}")
+
+    # --- command widgets ----------------------------------------------------
+    def run_commands(self, now):
+        self.children = [p for p in self.children if p.poll() is None]
+        for w in self.widgets:
+            if w.kind != "command" or not w.spec.get("exec"):
+                continue
+            state = self.commands[w.key]
+            proc = state["proc"]
+            if proc and now - state["started"] > COMMAND_TIMEOUT:
+                log(f"{w.spec.get('id')}: command timed out")
+                proc.kill()
+                self.finish_command(w, state)
+            elif not proc and now >= state["next"]:
+                try:
+                    state["proc"] = subprocess.Popen(
+                        ["bash", "-c", w.spec["exec"]], env=self.command_env(),
+                        stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                        stderr=subprocess.DEVNULL, start_new_session=True)
+                    state["out"], state["started"] = b"", now
+                except OSError as e:
+                    log(f"{w.spec.get('id')}: could not run: {e}")
+                interval = float(w.spec.get("interval", 0))
+                state["next"] = now + interval if interval > 0 else float("inf")
+
+    def command_fds(self):
+        return {s["proc"].stdout.fileno(): key for key, s in self.commands.items() if s["proc"]}
+
+    def read_command(self, key):
+        state = self.commands[key]
+        chunk = os.read(state["proc"].stdout.fileno(), 65536)
+        if chunk and len(state["out"]) < 65536:
+            state["out"] += chunk
+            return
+        w = next(w for w in self.widgets if w.key == key)
+        self.finish_command(w, state)
+
+    def finish_command(self, w, state):
+        proc, state["proc"] = state["proc"], None
+        proc.stdout.close()
+        try:
+            proc.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait()
+        # Plain text, or Waybar-style JSON: {"text": ..., "class": ...}
+        out = state["out"].decode("utf-8", "replace").strip()
+        text, urgent = out.splitlines()[0] if out else "", False
+        if out.startswith("{"):
+            try:
+                data = json.loads(out)
+                text = str(data.get("text", ""))
+                classes = data.get("class", [])
+                classes = [classes] if isinstance(classes, str) else classes
+                urgent = any(c in ("urgent", "critical") for c in classes)
+            except (ValueError, AttributeError):
+                pass
+        if (text, urgent) != (state["text"], state["urgent"]):
+            state["text"], state["urgent"] = text, urgent
+            if not w.spec.get("width"):
+                self.relayout()
+            self.dirty = True
+
+    # --- agent usage records -----------------------------------------------
+    def poll_usage(self):
+        """Read limits for every agents widget from its Omarchy usage record."""
+        for agent in {str(w.spec.get("agent", "claude")) for w in self.widgets if w.kind == "agents"}:
+            path = os.path.join(USAGE_DIR, f"{agent}.json")
+            try:
+                mtime = os.stat(path).st_mtime_ns
+            except OSError:
+                mtime = None
+            old = self.usage.get(agent)
+            if old and old[0] == mtime:
+                continue
+            limits = []
+            try:
+                with open(path) as f:
+                    record = json.load(f)
+                for entry in record.get("limits") or []:
+                    frac = float(entry.get("percent", -1))
+                    if frac >= 0:
+                        label = str(entry.get("label", "")).split(" (")[0] or "Limit"
+                        limits.append((label, frac))
+            except (OSError, ValueError, TypeError, AttributeError) as e:
+                if mtime is not None:
+                    log(f"unreadable usage record {path}: {e}")
+            self.usage[agent] = (mtime, limits)
+            if not old or old[1] != limits:
+                self.relayout()
+
+    def limits_for(self, w):
+        limits = self.usage.get(str(w.spec.get("agent", "claude")), (None, []))[1]
+        return limits or [("Session", None), ("Weekly", None)]
+
+    @staticmethod
+    def meter_width(w):
+        return int(w.spec.get("meterWidth", 320))
 
     # --- drawing ------------------------------------------------------------
     def draw(self, buf):
-        if DEBUG_BG:
-            bg = BG_DEBUG_FN if self.fn else BG_DEBUG
+        c = self.config
+        if c.debug_background:
+            bg = c.debug_bg_fn if self.fn else c.debug_bg
         else:
-            bg = BG
+            bg = c.background
         self.fill(buf, 0, 0, self.long, self.short, bg)
-        buttons = self.visible_buttons()
-        for b in buttons:
-            if b.name == "esc":
-                self.draw_esc(buf, b)
+        widgets = self.visible_widgets()
+        for w in widgets:
+            if w.kind == "esc":
+                self.draw_esc(buf, w)
         surface = self.surfaces.get(self.drawing)
         if surface and not self.portrait and not FLIP_X and not FLIP_Y:
             surface.mark_dirty()     # we wrote pixels behind cairo's back
             cr = cairo.Context(surface)
-            cr.select_font_face(FONT)
-            for b in buttons:
-                if b.draw:
-                    b.draw(cr, b)
+            cr.select_font_face(c.font)
+            for w in widgets:
+                if w.kind == "button":
+                    self.draw_button(cr, w)
+                elif w.kind == "command":
+                    self.draw_command(cr, w)
+                elif w.kind == "agents":
+                    self.draw_agents(cr, w)
             surface.flush()
-        if TEST_PATTERN:
+        if c.test_pattern:
             self.draw_test_pattern(buf)
-        if SHOW_BORDER or TEST_PATTERN:
+        if c.border or c.test_pattern:
             self.draw_border(buf)
 
-    def draw_esc(self, buf, b):
-        x0, y0, x1, y1 = b.rect
+    def draw_esc(self, buf, w):
+        x0, y0, x1, y1 = w.rect
         pad = KEY_PAD
         self.fill(buf, x0 + pad, y0 + pad, x1 - pad, y1 - pad,
-                  ESC_PRESSED if self.pressed(b) else ESC_BG)
+                  self.config.key_pressed if self.pressed(w) else self.config.key)
         # "esc" label, 5x7 glyphs scaled
         scale = max(1, (self.short - 2 * pad) // 14)
         text = "esc"
@@ -315,7 +547,7 @@ class Renderer:
                     if px == "#":
                         lx = tx + (i * 6 + gx) * scale
                         ly = ty + gy * scale
-                        self.fill(buf, lx, ly, lx + scale, ly + scale, ESC_FG)
+                        self.fill(buf, lx, ly, lx + scale, ly + scale, self.config.text)
 
     def color(self, rgb, alpha=1.0):
         k = DIM if self.dimmed else 1.0
@@ -329,63 +561,75 @@ class Renderer:
         cr.arc(x + r, y + r, r, 3.1416, 4.7124)
         cr.close_path()
 
-    def draw_key_face(self, cr, b):
-        x0, y0, x1, y1 = b.rect
+    def draw_key_face(self, cr, w):
+        x0, y0, x1, y1 = w.rect
         p = KEY_PAD
         cr.rectangle(x0 + p, y0 + p, x1 - x0 - 2 * p, y1 - y0 - 2 * p)
-        cr.set_source_rgba(*self.color(ESC_PRESSED if self.pressed(b) else ESC_BG))
+        cr.set_source_rgba(*self.color(self.config.key_pressed if self.pressed(w) else self.config.key))
         cr.fill()
 
-    def draw_glyph(self, cr, glyph, cx, cy, size):
+    def draw_text(self, cr, text, cx, cy, size, rgb=None):
+        """Draw text centred on (cx, cy) by its ink extents (good for icons)."""
         cr.set_font_size(size)
-        ext = cr.text_extents(glyph)
+        ext = cr.text_extents(text)
         cr.move_to(cx - ext.width / 2 - ext.x_bearing, cy - ext.height / 2 - ext.y_bearing)
-        cr.set_source_rgba(*self.color(ESC_FG))
-        cr.show_text(glyph)
+        cr.set_source_rgba(*self.color(rgb or self.config.text))
+        cr.show_text(text)
 
-    def draw_glyph_key(self, cr, b, glyph, size):
-        self.draw_key_face(cr, b)
-        x0, y0, x1, y1 = b.rect
-        self.draw_glyph(cr, glyph, (x0 + x1) / 2, (y0 + y1) / 2, size)
+    def draw_button(self, cr, w):
+        self.draw_key_face(cr, w)
+        x0, y0, x1, y1 = w.rect
+        s = w.spec
+        if s.get("icon"):
+            self.draw_text(cr, str(s["icon"]), (x0 + x1) / 2, (y0 + y1) / 2, float(s.get("iconSize", 30)))
+        elif s.get("label"):
+            self.draw_label(cr, str(s["label"]), w, float(s.get("fontSize", 18)), self.config.text)
 
-    def usage_limits(self):
-        return self.limits or [("Session", None), ("Weekly", None)]
+    def draw_label(self, cr, text, w, size, rgb):
+        """Draw a text line centred in the widget on the font's baseline."""
+        x0, y0, x1, y1 = w.rect
+        cr.set_font_size(size)
+        ext, fext = cr.text_extents(text), cr.font_extents()
+        cr.move_to((x0 + x1 - ext.x_advance) / 2, (y0 + y1) / 2 + (fext[0] - fext[1]) / 2)
+        cr.set_source_rgba(*self.color(rgb))
+        cr.show_text(text)
 
-    def usage_rect(self):
-        n = len(self.usage_limits())
-        width = 14 + 30 + 14 + n * METER_WIDTH + (n - 1) * 24 + 16 + 2 * KEY_PAD
-        return self.visible - width, 0, self.visible, self.short
+    def draw_command(self, cr, w):
+        self.draw_key_face(cr, w)
+        state = self.commands[w.key]
+        self.draw_label(cr, state["text"], w, float(w.spec.get("fontSize", 18)),
+                        self.config.urgent if state["urgent"] else self.config.text)
 
-    def draw_usage(self, cr, b):
+    def draw_agents(self, cr, w):
         """Key-style container: agents icon, then one meter per limit."""
-        gap, icon_w = 24, 30
-        self.draw_key_face(cr, b)
-        x0 = b.rect[0] + KEY_PAD
-        white = (0xFF, 0xFF, 0xFF)
-        self.draw_glyph(cr, USAGE_ICON, x0 + 14 + icon_w / 2, self.short / 2, 30)
+        gap, icon_w, meter_w = 24, 30, self.meter_width(w)
+        white, urgent = self.config.text, self.config.urgent
+        self.draw_key_face(cr, w)
+        x0 = w.rect[0] + KEY_PAD
+        self.draw_text(cr, USAGE_ICON, x0 + 14 + icon_w / 2, self.short / 2, 30)
 
         cr.set_font_size(15)
         x = x0 + 14 + icon_w + 14
-        for label, frac in self.usage_limits():
+        for label, frac in self.limits_for(w):
             alarm = frac is not None and frac >= METER_ALARM
             cr.set_source_rgba(*self.color(white))
             cr.move_to(x, 25)
             cr.show_text(label)
             pct = "—" if frac is None else f"{round(frac * 100)}%"
             ext = cr.text_extents(pct)
-            cr.set_source_rgba(*self.color(URGENT if alarm else white))
-            cr.move_to(x + METER_WIDTH - ext.x_advance, 25)
+            cr.set_source_rgba(*self.color(urgent if alarm else white))
+            cr.move_to(x + meter_w - ext.x_advance, 25)
             cr.show_text(pct)
 
-            self.rounded_rect(cr, x, 33, METER_WIDTH, 10, 5)
+            self.rounded_rect(cr, x, 33, meter_w, 10, 5)
             cr.set_source_rgba(*self.color(white, 0.2))
             cr.fill()
             if frac:
-                fw = max(10, METER_WIDTH * min(frac, 1.0))
+                fw = max(10, meter_w * min(frac, 1.0))
                 self.rounded_rect(cr, x, 33, fw, 10, 5)
-                cr.set_source_rgba(*self.color(URGENT if alarm else white))
+                cr.set_source_rgba(*self.color(urgent if alarm else white))
                 cr.fill()
-            x += METER_WIDTH + gap
+            x += meter_w + gap
 
     def draw_border(self, buf, b=2, red=(0xFF, 0, 0)):
         v = self.visible
@@ -415,40 +659,6 @@ class Renderer:
                   what=f"submit frame {self.frame_id}")
         self.dirty = False
 
-    # --- usage record -------------------------------------------------------
-    def poll_usage(self):
-        try:
-            mtime = os.stat(USAGE_FILE).st_mtime_ns
-        except OSError:
-            mtime = None
-        if mtime == self.usage_mtime:
-            return
-        self.usage_mtime = mtime
-        limits = []
-        try:
-            with open(USAGE_FILE) as f:
-                record = json.load(f)
-            for entry in record.get("limits") or []:
-                frac = float(entry.get("percent", -1))
-                if frac >= 0:
-                    label = str(entry.get("label", "")).split(" (")[0] or "Limit"
-                    limits.append((label, frac))
-        except (OSError, ValueError, TypeError, AttributeError) as e:
-            if mtime is not None:
-                log(f"unreadable usage record: {e}")
-        if limits != self.limits:
-            self.limits = limits
-            self.relayout()
-            self.dirty = True
-
-    def relayout(self):
-        """Rebuild buttons (the usage widget's width follows the limit count),
-        keeping each finger attached to the rebuilt version of its button."""
-        old = {id(b): b.name for b in self.buttons}
-        self.buttons = self.layout()
-        by_name = {b.name: b for b in self.buttons}
-        self.owner = {cid: by_name[old[id(b)]] for cid, b in self.owner.items()}
-
     # --- events -------------------------------------------------------------
     def on_input(self, payload):
         _ns, fn, count, _ = struct.unpack_from("<QBBH", payload)
@@ -468,25 +678,26 @@ class Renderer:
                 self.repeat_at.pop(cid, None)
         now = time.monotonic()
         for cid, (lx, ly) in touching.items():
-            if TEST_PATTERN and cid not in self.logged_contacts:
+            if self.config.test_pattern and cid not in self.logged_contacts:
                 log(f"touch down id={cid} x={lx} y={ly}")
             if cid in self.owner:
                 continue
-            button = next((b for b in self.visible_buttons() if b.hit(lx, ly)), None)
-            if button:
-                self.owner[cid] = button
-                button.press()
-                if button.repeats:
-                    self.repeat_at[cid] = now + REPEAT_DELAY
+            widget = next((w for w in self.visible_widgets()
+                           if w.kind != "spacer" and w.hit(lx, ly)), None)
+            if widget:
+                self.owner[cid] = widget
+                self.press(widget)
+                if widget.repeats:
+                    self.repeat_at[cid] = now + self.config.repeat_delay
 
-        if TEST_PATTERN:
+        if self.config.test_pattern:
             self.logged_contacts = set(touching)
             marks = [lx for lx, _ in touching.values()]
             if marks != self.touch_marks:
                 self.touch_marks = marks
                 self.dirty = True
         after = (self.fn, self.fn_layer(), set(self.owner.values()))
-        if after[1:] != before[1:] or (DEBUG_BG and after[0] != before[0]):
+        if after[1:] != before[1:] or (self.config.debug_background and after[0] != before[0]):
             self.dirty = True
         if count:
             self.last_input = now
@@ -497,21 +708,8 @@ class Renderer:
     def run_repeats(self, now):
         for cid, due in list(self.repeat_at.items()):
             if now >= due:
-                self.owner[cid].press()
-                self.repeat_at[cid] = max(due + REPEAT_INTERVAL, now)
-
-    def spawn(self, argv):
-        """Run a desktop command without blocking the render loop."""
-        env = dict(os.environ)
-        env.setdefault("OMARCHY_PATH", "/usr/share/omarchy")
-        if OMARCHY_BIN not in env.get("PATH", "").split(":"):
-            env["PATH"] = OMARCHY_BIN + ":" + env.get("PATH", "/usr/bin")
-        try:
-            subprocess.Popen(argv, env=env, stdin=subprocess.DEVNULL,
-                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                             start_new_session=True)
-        except OSError as e:
-            log(f"could not run {argv[0]}: {e}")
+                self.press(self.owner[cid])
+                self.repeat_at[cid] = max(due + self.config.repeat_interval, now)
 
     def handle(self, mtype, req, payload):
         if mtype == ACK:
@@ -533,24 +731,31 @@ class Renderer:
         while True:
             now = time.monotonic()
             if now >= next_poll:
+                self.poll_config()
                 self.poll_usage()
-                next_poll = now + USAGE_POLL_SECONDS
+                next_poll = now + POLL_SECONDS
+            self.run_commands(now)
             self.run_repeats(now)
-            if IDLE_SECONDS > 0 and not self.dimmed and now >= self.last_input + IDLE_SECONDS:
+            idle = self.config.idle_dim
+            if idle > 0 and not self.dimmed and now >= self.last_input + idle:
                 self.dimmed = True
                 self.dirty = True
             self.present()
-            deadlines = [next_poll, *self.repeat_at.values()]
-            if IDLE_SECONDS > 0 and not self.dimmed:
-                deadlines.append(self.last_input + IDLE_SECONDS)
+            deadlines = [next_poll, *self.repeat_at.values(),
+                         *(s["next"] for s in self.commands.values() if not s["proc"])]
+            if idle > 0 and not self.dimmed:
+                deadlines.append(self.last_input + idle)
             timeout = max(0.0, min(deadlines) - now)
-            ready, _, _ = select.select([self.sock], [], [], timeout)
-            if ready:
-                self.handle(*self.recv())
+            fds = self.command_fds()
+            ready, _, _ = select.select([self.sock, *fds], [], [], timeout)
+            for fd in ready:
+                if fd is self.sock:
+                    self.handle(*self.recv())
+                else:
+                    self.read_command(fds[fd])
 
 
 if __name__ == "__main__":
-    signal.signal(signal.SIGCHLD, signal.SIG_IGN)   # auto-reap spawned commands
     try:
         Renderer().run()
     except KeyboardInterrupt:

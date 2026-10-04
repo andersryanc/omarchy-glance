@@ -4,6 +4,8 @@ set -euo pipefail
 
 link="${XDG_CONFIG_HOME:-$HOME/.config}/t1bridge/renderer"
 custom="$HOME/Work/touchbar/renderer.py"
+config="${XDG_CONFIG_HOME:-$HOME/.config}/touchbar/config.json"
+default_config="$HOME/Work/touchbar/config.default.json"
 
 case "${1:-status}" in
   on)
@@ -24,11 +26,22 @@ case "${1:-status}" in
     if [[ -L "$link" ]]; then echo "selected: $(readlink "$link")"; else echo "selected: built-in"; fi
     systemctl --user --no-pager status t1-touchbar | sed -n '/CGroup/,$p'
     ;;
+  config)
+    # Create the user config from the default if needed; the renderer reloads
+    # it on save.
+    if [[ ! -e "$config" ]]; then
+      mkdir -p "$(dirname "$config")"
+      cp "$default_config" "$config"
+      echo "created $config from the default"
+    fi
+    if [[ "${2:-}" == "edit" ]]; then exec "${EDITOR:-nvim}" "$config"; fi
+    echo "$config"
+    ;;
   log)
     journalctl --user -u t1-touchbar -f
     ;;
   *)
-    echo "usage: touchbar-custom [on|off|restart|status|log]" >&2
+    echo "usage: touchbar-custom [on|off|restart|status|log|config [edit]]" >&2
     exit 1
     ;;
 esac

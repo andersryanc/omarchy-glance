@@ -95,7 +95,7 @@ gradient. Tap one to open btop (as Super+Ctrl+T does).
 | Option | Default | |
 |---|---|---|
 | `label` | `"cpu"` / `"mem"` | Text before the graph (`""` for none). |
-| `graphWidth` | `200` | Graph width in px. History is `graphWidth / dotSpacing` samples. |
+| `graphWidth` | `100` | Graph width in px. History is `graphWidth / dotSpacing` samples. |
 | `interval` | `1` | Seconds between samples. |
 | `style` | `"dots"` | `"dots"`, or `"bars"` for solid columns. |
 | `dotSpacing`, `dotSize` | `4`, `1.28` | Dot pitch and radius in px. |

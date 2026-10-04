@@ -640,7 +640,7 @@ class Renderer:
         return max(2, int(w.spec.get("dotSpacing", 4)))
 
     def graph_columns(self, w):
-        return max(1, int(w.spec.get("graphWidth", 200)) // self.graph_spacing(w))
+        return max(1, int(w.spec.get("graphWidth", 100)) // self.graph_spacing(w))
 
     def graph_gradient(self, w):
         stops = w.spec.get("gradient")

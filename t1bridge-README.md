@@ -1,0 +1,291 @@
+# T1Bridge
+
+Open-source Linux support for Apple's T1 iBridge. The goal is to support
+**every function directly handled by the T1**, including its display, camera,
+Touch ID, sensors, and device lifecycle—not only fingerprint authentication.
+Current coverage and remaining work are listed below.
+
+> [!CAUTION]
+> **STOP BEFORE ERASING OR PARTITIONING YOUR MAC: PRESERVE ITS APPLE EFI DATA.**
+>
+> Touch ID needs this Mac's original `EFI/APPLE/EMBEDDEDOS/FDRData`.
+> Keep the Apple EFI partition and make a separate backup on another device
+> **before installing Linux or formatting any partition**. Check that the
+> backup actually contains that path; keeping only Linux boot files is not enough.
+>
+> **Without this data or a matching backup, T1Bridge cannot set up Touch ID.**
+> Re-enrolling fingerprints, reinstalling this package, or another Mac's backup
+> cannot substitute for it.
+>
+> **Already erased it? Recovery is possible:** restore macOS on this Mac and
+> let it complete its first boot so the machine-specific EFI data is regenerated.
+> Merely downloading an installer or booting into Recovery is not enough.
+> Then verify and back up `EFI/APPLE/EMBEDDEDOS/FDRData` before returning to Linux.
+> Back up your Linux data before restoring macOS; restoration can erase it.
+
+Install the official signed packages from **linux.standardagents.ai**.
+No source build, GitHub authentication, or download token is required.
+
+## Supported hardware
+
+| MacBook Pro | Model identifier | Hardware testing |
+| --- | --- | --- |
+| 2016, 13-inch with Touch Bar | `MacBookPro13,2` | 🟢 Tester-confirmed Touch Bar, Touch ID and reboot persistence; limitations below |
+| 2016, 15-inch with Touch Bar | `MacBookPro13,3` | 🟢 Success confirmed on two machines; limitations below |
+| 2017, 13-inch with Touch Bar | `MacBookPro14,2` | 🟡 Touch Bar and Touch ID confirmed; lid/resume and relay failures reported |
+| 2017, 15-inch with Touch Bar | `MacBookPro14,3` | 🟡 Enrollment confirmed after scoped xART firewall setup; broader coverage unconfirmed |
+
+MacBookPro13,3 success is confirmed on two machines. A
+[MacBookPro13,2 tester](https://github.com/standardagents/t1bridge/issues/5)
+confirmed Touch Bar controls, two-finger enrollment/verification, reboot
+persistence and configured PAM consumers on official v0.1.1 packages. Camera
+streaming and system sleep/wake were not tested there. A
+[MacBookPro14,3 tester](https://github.com/standardagents/t1bridge/issues/2)
+confirmed enrollment after allowing xART on the private T1 link and a full
+shutdown/power-on, without replacing the packaged build or resetting saved data.
+This does not establish all functions on that model. Version 0.1.10 fixes the
+[automatic-import sandbox failure](https://github.com/standardagents/t1bridge/issues/36)
+reproduced with synthetic storage; confirmation on the reporting machine is
+pending. Explicit same-machine backup import works for those reporters.
+A [MacBookPro14,2 tester](https://github.com/standardagents/t1bridge/issues/2#issuecomment-5563782774)
+reported Touch Bar, enrollment/verification, sudo and lock authentication on
+v0.1.1, with controls persisting after reboot. Camera capture was not tested;
+lid reopening left a black screen, and a sustained
+[keybag relay restart loop](https://github.com/standardagents/t1bridge/issues/14)
+remains under investigation.
+Reports from testers are welcome
+through [GitHub issues](https://github.com/standardagents/t1bridge/issues);
+include your model, kernel/package versions and which functions work or fail,
+but no serial numbers or machine-specific EFI data.
+
+T2 Macs, Apple Silicon, and models without a Touch Bar are outside this
+project's hardware scope. **Currently installable official packages are for
+x86_64 Arch Linux and Arch-based distributions, including Omarchy, only**
+(systemd 256 or newer). There are no official Ubuntu, Mint, Debian, or Fedora
+packages yet. The source is desktop-neutral; supporting another distribution
+requires packaging and validation, not installing these Arch packages there.
+See [supported versions](docs/dependencies.md#supported-and-tested-versions).
+
+## T1 function support
+
+🟢 Available · 🟡 Partial / integration needed · 🔴 Not working or not implemented
+
+These statuses describe current coverage, not a claim that every model and
+kernel combination has been tested. Missing T1 functionality remains in scope.
+
+| Function | Current status | Details |
+| --- | --- | --- |
+| Touch Bar display and touch input | 🟢 Available | Default renderer, Escape, hardware controls, and F1–F12 while Fn is held. This is the Touch Bar display, not the laptop's main GPU/display. |
+| Screen and keyboard brightness buttons | 🟢 Available | Controls the machine's available Linux backlights; this does not mean T1Bridge owns those backlight drivers. |
+| Custom Touch Bar renderers | 🟢 Available | Unprivileged programs through the [renderer interface](docs/interfaces.md#renderer-selection-v1). Try the optional [Doom demo](#try-a-custom-touch-bar-ui). |
+| Volume, media controls, desktop HUDs, Touch Bar off with the display | 🟡 Optional integration | Requires a desktop provider; none is bundled in the core package. |
+| Touch ID enrollment, matching and deletion | 🟢 Available | Standard fprintd tools; up to three enrolled fingers for one Linux owner. Requires preserved Apple EFI data. |
+| sudo, Polkit and lock-screen authentication | 🟡 Requires configuration | Uses `pam_fprintd`; configure each consumer and retain password fallback. |
+| Saved fingerprints across reboot | 🟢 Available | Protected keybag storage and automatic restore; no routine re-enrollment. |
+| FaceTime HD camera | 🟢 Available | T1 H.264 support through the packaged UVC driver. Application format support still applies. |
+| Private T1 network and xART storage | 🟢 Available | Device-driven services; no manually named network profile required. |
+| Apple machine-data import | 🟡 Available; latest automatic-import fix awaits hardware confirmation | Explicit same-machine EFI-tree/FDR backup works; 0.1.10 fixes the reproduced service sandbox failure. Import does not recreate lost data. |
+| T1 startup and reboot recovery | 🟢 Available | Packaged device/service ordering restores the T1 stack after boot. |
+| T1 sleep/wake (system suspend/resume) | 🔴 Not working on the tested machine | Not supported currently. T1 recovery across system sleep/wake remains in scope; the cause of the host suspend failure is not established here. Screen blanking and waking the display are not system suspend/resume. |
+| T1 runtime power saving | 🟡 Limited | Runtime autosuspend is disabled for T1 stability; power-saving suspend/recovery is not a supported feature yet. |
+| Ambient-light sensor | 🟡 Available on the tested machine | Stock HID/IIO and required sensor proxy expose light readings. Optional `t1bridge-omarchy` provides automatic panel brightness; broader validation remains in [#17](https://github.com/standardagents/t1bridge/issues/17). See [sensor support](docs/ambient-light.md). |
+| General Secure Enclave key services | 🔴 Not implemented | [Feasibility and prior art](docs/secure-enclave-key-services.md): macOS precedent exists; T1/Linux key-service contracts remain unresolved. |
+
+Wi-Fi, Bluetooth, speakers, the internal keyboard/trackpad, GPU switching and
+host-wide power management are separate from T1Bridge. **Recovery of the T1's
+own functions during host sleep/wake is in scope**; fixing unrelated GPU,
+firmware, or platform suspend problems is not. This is not a complete MacBook
+hardware-enablement bundle.
+
+## Try a custom Touch Bar UI
+
+The separate Standard Agents [touchbar-doom](https://github.com/standardagents/touchbar-doom)
+package is an optional demo for Omarchy users who want to try a nonstandard
+Touch Bar UI. It runs playable Doom with a panoramic game view, labeled HUD, weapon artwork,
+and a mute toggle through T1Bridge's unprivileged renderer interface.
+
+Follow its [installation instructions](https://github.com/standardagents/touchbar-doom#install-the-optional-package)
+to install the package and supply the Doom shareware game data. Open **Touch Bar
+Doom** from the application launcher or run `touchbar-doom launch`. Tap **QUIT**
+at the far left, or press Fn, to restore the previous renderer.
+
+It is not bundled with T1Bridge or installed by default. Installing it does not
+change the active renderer; launching it is an explicit user action. Gameplay
+captures the keyboard until Quit or Fn releases it. A working T1Bridge
+Touch Bar is required first; the demo does not install hardware drivers.
+
+## Install official packages
+
+> [!CAUTION]
+> **Before continuing: preserve the Apple EFI partition and verify an external
+> backup contains `EFI/APPLE/EMBEDDEDOS/FDRData`. Without this Mac's data,
+> Touch ID setup will not work. Do not format the partition.**
+> If it is already missing, restore macOS through a complete first boot,
+> then preserve and back up the regenerated EFI data before returning to Linux.
+
+Keep a working password login and back up your disk.
+
+### 1. Trust the signing key
+
+Run from your normal account:
+
+```bash
+key_dir=$(mktemp -d)
+curl -fSLo "$key_dir/t1bridge-signing-key.asc" \
+  https://linux.standardagents.ai/arch/standardagents/x86_64/t1bridge-signing-key.asc
+gpg --show-keys --with-fingerprint "$key_dir/t1bridge-signing-key.asc"
+```
+
+Check that the **primary fingerprint** is exactly:
+
+```text
+35B166F78B063B04DE1E3D913E6C4216EB03D371
+```
+
+Only after it matches:
+
+```bash
+sudo pacman-key --add "$key_dir/t1bridge-signing-key.asc"
+sudo pacman-key --lsign-key 35B166F78B063B04DE1E3D913E6C4216EB03D371
+```
+
+### 2. Add the repository and install
+
+Add this block once to `/etc/pacman.conf`, preserving your existing repositories:
+
+```ini
+[standardagents]
+SigLevel = Required DatabaseRequired
+Server = https://linux.standardagents.ai/arch/$repo/$arch
+```
+
+Keep `$repo` and `$arch` literal in that file. For the standard Arch `linux` kernel:
+
+```bash
+sudo pacman -Syu --needed linux-headers t1bridge t1bridge-dkms libfprint-t1bridge fprintd-t1bridge
+```
+
+Use the header package matching your kernel if it is not `linux`. This performs
+a normal system upgrade. Confirm DKMS and initramfs/UKI generation succeed
+before rebooting; do not bypass signature or dependency errors.
+
+> [!NOTE]
+> **On Omarchy**, this `pacman -Syu` is blocked by Omarchy's own update guard,
+> which exists to stop a system upgrade from bypassing `omarchy update`'s
+> snapshot, keyring, and migration steps. Run the system upgrade through
+> Omarchy first, then install these packages without repeating `-u`:
+>
+> ```bash
+> omarchy update
+> sudo pacman -S --needed linux-headers t1bridge t1bridge-dkms libfprint-t1bridge fprintd-t1bridge
+> ```
+>
+> `omarchy update` already synced the databases and upgraded existing
+> packages, so the plain `-S --needed` install right after it is not a
+> partial upgrade. Do not run `pacman -Sy` (sync without upgrade) on its own
+> to work around the guard; on Arch that risks mismatched dependency versions
+> across an unevenly upgraded system. If you really need one combined
+> command, `sudo env OMARCHY_ALLOW_DIRECT_PACMAN=1 pacman -Syu --needed ...`
+> bypasses the guard for that invocation only.
+
+| Official package | Purpose |
+| --- | --- |
+| `t1bridge` | Services, importer, Touch ID broker and default Touch Bar |
+| `t1bridge-dkms` | T1 configuration, display, network and camera kernel modules |
+| `libfprint-t1bridge` | T1Bridge driver for the standard fingerprint API |
+| `fprintd-t1bridge` | Matched fingerprint daemon, tools and PAM module |
+
+The fingerprint packages replace distro libfprint/fprintd system-wide and must
+stay a matched pair. For Touch Bar/camera-only use, omit those two packages.
+
+### 3. Enable hardware support
+
+Still from your normal account:
+
+```bash
+sudo systemd-sysusers /usr/lib/sysusers.d/t1bridge.conf
+sudo systemd-tmpfiles --create /usr/lib/tmpfiles.d/t1bridge.conf
+sudo usermod -aG t1bridge "$(id -un)"
+sudo systemctl daemon-reload
+sudo systemctl enable t1-touchbar-hw.service t1-touchid-auth.socket t1bridge-fingerprint.socket
+```
+
+Reboot to load the modules and refresh group membership. Then, in your local
+graphical session:
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable --now t1-touchbar.service
+sudo t1bridge status
+```
+
+Check each status row. `keybag: not-enrolled` is normal before first enrollment.
+The private network and xART services start with the device; do not enable the
+keybag relay as an unconditional boot service or hot-swap competing T1 drivers.
+
+### 4. Set up Touch ID
+
+> [!IMPORTANT]
+> **Check the private xART firewall prerequisite before enrollment.**
+> A running service does not prove the T1 can connect to it. A default-deny
+> firewall must permit inbound IPv6 TCP 61500 only on the discovered T1 link
+> from its validated peer. See [firewall setup](docs/setup.md#firewall-recovery-and-removal).
+> Do not open this port on Wi-Fi/LAN or disable your firewall.
+
+With this Mac's preserved Apple EFI partition attached and the reader idle:
+
+```bash
+sudo systemctl start t1bridge-import.service
+sudo systemctl status t1bridge-import.service --no-pager
+```
+
+For a copied backup instead, see [backup import](docs/setup.md#import-this-machines-apple-data).
+After successful import, enroll and verify from your normal account in a
+terminal inside your graphical desktop session, with a working Polkit agent:
+
+```bash
+fprintd-list "$(id -un)"
+fprintd-enroll -f right-index-finger
+fprintd-verify -f right-index-finger
+```
+
+An enrollment timeout can mean missing Polkit authorization, even when xART is
+working. See [enrollment troubleshooting](docs/setup.md#enrollment-timeouts)
+before changing firewall rules.
+
+If you already have enrolled fingers, verify an existing one instead of enrolling
+it again. Choose the correct finger label and repeatedly lift/touch during
+enrollment. Require `enroll-completed` and then `verify-match`.
+
+Enrollment does **not** automatically enable sudo, Polkit or lock-screen login.
+Follow [safe PAM setup](docs/setup.md#enable-fingerprint-sign-in-safely) for your
+distribution, preserving password access and a root recovery shell. Do not
+blindly run a desktop setup wizard that replaces this matched fingerprint pair.
+
+For Omarchy's Quickshell lock screen, follow the
+[Touch ID unlock steps](docs/setup.md#omarchy-lock-screen-unlock) after verifying
+your enrolled finger. For desktop controls and HUDs, complete the optional
+integration's [automatic session startup](docs/setup.md#omarchy-session-startup).
+
+See [manual setup](docs/setup.md) for desktop providers, removal and recovery,
+and [How Touch ID works](docs/touch-id.md) for startup and authentication diagrams.
+
+## Package boundaries
+
+T1Bridge owns T1 hardware support, protected machine-data import and recovery,
+the fingerprint backend, and the default Touch Bar. Its core does not depend on
+desktop integration or the separately packaged libfprint/fprintd integration.
+
+Standard fprintd tools provide fingerprint management. A reusable management
+TUI and a baseline desktop-controls provider are planned as separate optional
+packages. Distribution integrations own installer preservation, automatic
+setup, menus, themes, and HUD integration. Custom Touch Bar renderers remain
+user-selected programs, not bundled presets.
+
+## Contributing and security
+
+See [contributing](CONTRIBUTING.md) for development and bug reports, and
+[security reporting](SECURITY.md) for private vulnerability reports.
+For import, Touch ID, or Touch Bar failures, see [opt-in shareable diagnostics](docs/diagnostics.md).
+
+Maintained by Andrew Boyd.

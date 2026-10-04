@@ -2,8 +2,8 @@
 
 A custom renderer for the MacBook Pro T1 Touch Bar, driven through
 [t1bridge](https://github.com/standardagents/t1bridge)'s Touch Bar hardware IPC
-(`t1bridge-interfaces.md`). It draws an Esc key, a Claude usage widget, and
-brightness/volume keys while Fn is held. Everything on the bar comes from a
+(`t1bridge-interfaces.md`). It draws an Esc key, btop-style CPU and memory
+graphs, a Claude usage widget, and brightness/volume keys while Fn is held. Everything on the bar comes from a
 JSON config.
 
 ## Switching renderers
@@ -69,6 +69,7 @@ widgets set a `type` and can use any id.
 |---|---|
 | `touchbar.esc` | `width` (140). Sends Esc. |
 | `touchbar.agents` | `agent` (`"claude"`; any record in `~/.local/state/omarchy/agents/usage/`), `meterWidth` (320), `onTap` (toggles the Omarchy agents panel; `""` for nothing). |
+| `touchbar.cpu`, `touchbar.memory` | A label, a btop-style dot graph of recent usage, and the current %. See [Graphs](#graphs). |
 | `touchbar.spacer` | `size` (40). Empty space. |
 | `"type": "button"` | `icon` (Nerd Font glyph) or `label` (text), `iconSize` (30), `fontSize` (18), `width` (140); then either `exec` (shell command) or `key` (`"esc"`, `"f1"`…`"f12"`), and `repeat` (`true` repeats while held). |
 | `"type": "command"` | `exec` (shell command whose output is shown), `interval` (seconds; omit to run once), `onTap` (shell command), `fontSize` (18), `width` (sized to the text when omitted). |
@@ -80,6 +81,33 @@ A command widget shows the first line of its script's output. Like Omarchy's
 command modules, it also accepts Waybar-style JSON:
 `{"text": "…", "class": "critical"}`. A class of `urgent` or `critical` turns
 the text red.
+
+### Graphs
+
+`touchbar.cpu` and `touchbar.memory` look like btop's graphs: one dot column
+per sample, newest on the right, coloured from the bottom up with btop's
+gradient. Tap one to open btop (as Super+Ctrl+T does).
+
+```json
+{ "id": "touchbar.cpu", "cores": true, "temperature": true }
+```
+
+| Option | Default | |
+|---|---|---|
+| `label` | `"cpu"` / `"mem"` | Text before the graph (`""` for none). |
+| `graphWidth` | `200` | Graph width in px. History is `graphWidth / dotSpacing` samples. |
+| `interval` | `1` | Seconds between samples. |
+| `style` | `"dots"` | `"dots"`, or `"bars"` for solid columns. |
+| `dotSpacing`, `dotSize` | `4`, `1.28` | Dot pitch and radius in px. |
+| `grid` | `true` | Faint dots where the graph is empty. |
+| `gradient` | btop theme | Colours from low to high, e.g. `["#00ff00", "#ffff00", "#ff0000"]`. By default it's the `cpu_*` / `used_*` gradient of btop's current theme (`~/.config/btop/themes/current.theme`), so it follows the Omarchy theme. |
+| `showValue` | `true` | The current %. |
+| `alarm` | `0.9` | The % turns `colors.urgent` at this fraction. |
+| `cores` | `false` | CPU only: a small meter per core after the graph. |
+| `temperature` | `false` | Show the sensor's temperature under the %. |
+| `sensor`, `temperatureAlarm` | `"coretemp"`, `90` | hwmon device to read (its `temp1_input`; see `/sys/class/hwmon/*/name`), and the °C at which it turns red. |
+| `fontSize` | `18` | Label and value text. |
+| `onTap` | open btop | Shell command (`""` for nothing). |
 
 ### Appearance and behaviour
 

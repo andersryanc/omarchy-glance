@@ -24,6 +24,8 @@
         { "id": "touchbar.esc" }
       ],
       "right": [
+        { "id": "touchbar.cpu" },
+        { "id": "touchbar.memory" },
         { "id": "touchbar.agents", "agent": "claude", "meterWidth": 320 }
       ]
     },

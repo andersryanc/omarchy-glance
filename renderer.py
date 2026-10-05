@@ -12,6 +12,7 @@ Spec: ~/Work/touchbar/t1bridge-interfaces.md
 
 import array
 import collections
+import datetime
 import fcntl
 import json
 import mmap
@@ -76,6 +77,7 @@ USAGE_ICON = "\U000F16A3"        # the Omarchy bar's agents glyph (Nerd Font)
 METER_ALARM = 0.9                # turn red at this fraction used, like the bar panel
 SHORT_LABELS = {"Session": "5h", "Weekly": "7d"}   # agents widget, stacked layout
 STACKED_FONT = 14
+RESET_COLOR = (0xA0, 0xA0, 0xA0)  # agents widget: when each limit resets
 ACTIVITY = "omarchy-launch-or-focus-tui btop"   # what Super+Ctrl+T opens
 MIC_TOGGLE = "omarchy-audio-input-mute"          # what the mic-mute key runs (with OSD)
 MEDIA_STATUS = "omarchy-shell media status"      # the bar's own player selection, as JSON
@@ -211,6 +213,7 @@ class Renderer:
         self.mic = None              # Mic, while a touchbar.mic widget exists
         self.media_watch = None      # dbus-monitor for player changes, while a media widget exists
         self.media_watch_at = 0.0    # earliest (re)start
+        self.minute = None           # wall-clock minute, for reset times
         self.repeat_at = {}          # contact id -> monotonic time of next repeat
         self.last_input = time.monotonic()
         self.dimmed = False
@@ -374,8 +377,9 @@ class Renderer:
         if w.kind == "spacer":
             return int(s.get("size", 40))
         if w.kind == "agents" and s.get("layout") == "stacked":
-            label_w, pct_w = self.stacked_columns(w)
-            return 14 + 30 + 14 + label_w + 10 + self.meter_width(w) + 10 + pct_w + 16 + 2 * KEY_PAD
+            label_w, pct_w, reset_w = self.stacked_columns(w)
+            reset_w = reset_w + 12 if reset_w else 0
+            return 14 + 30 + 14 + label_w + 10 + self.meter_width(w) + 10 + pct_w + reset_w + 16 + 2 * KEY_PAD
         if w.kind == "agents":
             n = len(self.limits_for(w))
             return 14 + 30 + 14 + n * self.meter_width(w) + (n - 1) * 24 + 16 + 2 * KEY_PAD
@@ -592,7 +596,11 @@ class Renderer:
                     frac = float(entry.get("percent", -1))
                     if frac >= 0:
                         label = str(entry.get("label", "")).split(" (")[0] or "Limit"
-                        limits.append((label, frac))
+                        try:
+                            resets = datetime.datetime.fromisoformat(str(entry["resetsAt"]))
+                        except (KeyError, ValueError):
+                            resets = None
+                        limits.append((label, frac, resets))
             except (OSError, ValueError, TypeError, AttributeError) as e:
                 if mtime is not None:
                     log(f"unreadable usage record {path}: {e}")
@@ -602,7 +610,7 @@ class Renderer:
 
     def limits_for(self, w):
         limits = self.usage.get(str(w.spec.get("agent", "claude")), (None, []))[1]
-        return limits or [("Session", None), ("Weekly", None)]
+        return limits or [("Session", None, None), ("Weekly", None, None)]
 
     @staticmethod
     def meter_width(w):
@@ -614,12 +622,46 @@ class Renderer:
         return str(labels.get(label, label[:1].lower()))
 
     def stacked_columns(self, w):
-        """Widths of the label and percent columns in the stacked layout."""
+        """Widths of the label, percent and reset columns in the stacked layout."""
         self.measure.select_font_face(self.config.font)
         self.measure.set_font_size(STACKED_FONT)
         label_w = max(self.measure.text_extents(self.short_label(w, l)).x_advance
-                      for l, _ in self.limits_for(w))
-        return int(label_w), int(self.measure.text_extents("100%").x_advance)
+                      for l, _, _ in self.limits_for(w))
+        widest = self.reset_widest(w)
+        reset_w = self.measure.text_extents(widest).x_advance if widest else 0
+        return int(label_w), int(self.measure.text_extents("100%").x_advance), int(reset_w)
+
+    def reset_text(self, w, resets):
+        """When a limit resets: a clock time (with the weekday if it's more than
+        a day away), or with "resets": "countdown" the time left."""
+        mode = w.spec.get("resets", "time")
+        if mode == "none":
+            return ""
+        if resets is None:
+            return "—"
+        if resets.tzinfo is None:
+            resets = resets.replace(tzinfo=datetime.timezone.utc)
+        now = datetime.datetime.now(datetime.timezone.utc)
+        left = (resets - now).total_seconds()
+        if left <= 0:
+            return "now"
+        if mode == "countdown":
+            minutes = int(left // 60)
+            days, hours, mins = minutes // 1440, minutes // 60 % 24, minutes % 60
+            return f"{days}d {hours}h" if days else f"{hours}h {mins:02d}m" if hours else f"{mins}m"
+        fmt = w.spec.get("timeFormat", "%H:%M") if left < 86400 else w.spec.get("dayTimeFormat", "%a %H:%M")
+        return resets.astimezone().strftime(fmt)
+
+    def reset_widest(self, w):
+        """A sample of the longest reset text, so the widget doesn't change width."""
+        mode = w.spec.get("resets", "time")
+        if mode == "none":
+            return ""
+        if mode == "countdown":
+            return "6d 23h"
+        sample = datetime.datetime(2026, 9, 30, 23, 59)           # a Wednesday
+        return max((sample.strftime(w.spec.get("dayTimeFormat", "%a %H:%M")),
+                    sample.strftime(w.spec.get("timeFormat", "%H:%M"))), key=len)
 
     # --- mic and media widgets ---------------------------------------------
     def update_mic(self, now):
@@ -1080,12 +1122,12 @@ class Renderer:
         """Agents icon, then one row per limit: short label, meter, percent."""
         white, urgent = self.config.text, self.config.urgent
         meter_w = self.meter_width(w)
-        label_w, pct_w = self.stacked_columns(w)
+        label_w, pct_w, reset_w = self.stacked_columns(w)
         x0 = w.rect[0] + KEY_PAD
         self.draw_text(cr, USAGE_ICON, x0 + 14 + 15, self.short / 2, 30)
         limits = self.limits_for(w)
         x = x0 + 14 + 30 + 14
-        for i, (label, frac) in enumerate(limits):
+        for i, (label, frac, resets) in enumerate(limits):
             cy = self.short / 2 + (i - (len(limits) - 1) / 2) * 22
             alarm = frac is not None and frac >= METER_ALARM
             self.draw_text_at(cr, self.short_label(w, label), x, cy, STACKED_FONT, white)
@@ -1100,6 +1142,9 @@ class Renderer:
             pct = "—" if frac is None else f"{round(frac * 100)}%"
             self.draw_text_at(cr, pct, mx + meter_w + 10 + pct_w, cy, STACKED_FONT,
                               urgent if alarm else white, align="right")
+            if reset_w:
+                self.draw_text_at(cr, self.reset_text(w, resets), mx + meter_w + 10 + pct_w + 12, cy,
+                                  STACKED_FONT, RESET_COLOR)
 
     def draw_agents(self, cr, w):
         """Key-style container: agents icon, then one meter per limit."""
@@ -1115,11 +1160,15 @@ class Renderer:
 
         cr.set_font_size(15)
         x = x0 + 14 + icon_w + 14
-        for label, frac in self.limits_for(w):
+        for label, frac, resets in self.limits_for(w):
             alarm = frac is not None and frac >= METER_ALARM
             cr.set_source_rgba(*self.color(white))
             cr.move_to(x, 25)
             cr.show_text(label)
+            reset = self.reset_text(w, resets)
+            if reset:
+                cr.set_source_rgba(*self.color(RESET_COLOR))
+                cr.show_text("  " + reset)
             pct = "—" if frac is None else f"{round(frac * 100)}%"
             ext = cr.text_extents(pct)
             cr.set_source_rgba(*self.color(urgent if alarm else white))
@@ -1263,6 +1312,12 @@ class Renderer:
                 self.poll_config()
                 self.poll_usage()
                 self.poll_theme()
+                minute = int(time.time() // 60)
+                if minute != self.minute:        # reset times and countdowns
+                    self.minute = minute
+                    for w in self.widgets:
+                        if w.kind == "agents":
+                            self.redraw(w)
                 next_poll = now + POLL_SECONDS
             self.run_commands(now)
             self.sample_graphs(now)

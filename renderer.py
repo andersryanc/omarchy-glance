@@ -74,6 +74,8 @@ AGENTS_TOGGLE = "omarchy-shell -q omarchy.agents toggle"
 USAGE_DIR = os.path.expanduser("~/.local/state/omarchy/agents/usage")
 USAGE_ICON = "\U000F16A3"        # the Omarchy bar's agents glyph (Nerd Font)
 METER_ALARM = 0.9                # turn red at this fraction used, like the bar panel
+SHORT_LABELS = {"Session": "5h", "Weekly": "7d"}   # agents widget, stacked layout
+STACKED_FONT = 14
 ACTIVITY = "omarchy-launch-or-focus-tui btop"   # what Super+Ctrl+T opens
 MIC_TOGGLE = "omarchy-audio-input-mute"          # what the mic-mute key runs (with OSD)
 MEDIA_STATUS = "omarchy-shell media status"      # the bar's own player selection, as JSON
@@ -364,6 +366,9 @@ class Renderer:
         s = w.spec
         if w.kind == "spacer":
             return int(s.get("size", 40))
+        if w.kind == "agents" and s.get("layout") == "stacked":
+            label_w, pct_w = self.stacked_columns(w)
+            return 14 + 30 + 14 + label_w + 10 + self.meter_width(w) + 10 + pct_w + 16 + 2 * KEY_PAD
         if w.kind == "agents":
             n = len(self.limits_for(w))
             return 14 + 30 + 14 + n * self.meter_width(w) + (n - 1) * 24 + 16 + 2 * KEY_PAD
@@ -594,7 +599,20 @@ class Renderer:
 
     @staticmethod
     def meter_width(w):
-        return int(w.spec.get("meterWidth", 320))
+        return int(w.spec.get("meterWidth", 200 if w.spec.get("layout") == "stacked" else 320))
+
+    def short_label(self, w, label):
+        """Stacked layout labels: "Session" -> "5h", "Weekly" -> "7d", or `shortLabels`."""
+        labels = {**SHORT_LABELS, **(w.spec.get("shortLabels") or {})}
+        return str(labels.get(label, label[:1].lower()))
+
+    def stacked_columns(self, w):
+        """Widths of the label and percent columns in the stacked layout."""
+        self.measure.select_font_face(self.config.font)
+        self.measure.set_font_size(STACKED_FONT)
+        label_w = max(self.measure.text_extents(self.short_label(w, l)).x_advance
+                      for l, _ in self.limits_for(w))
+        return int(label_w), int(self.measure.text_extents("100%").x_advance)
 
     # --- mic and media widgets ---------------------------------------------
     def update_mic(self, now):
@@ -1020,8 +1038,37 @@ class Renderer:
         self.draw_label(cr, state["text"], w, float(w.spec.get("fontSize", 18)),
                         self.config.urgent if state["urgent"] else self.config.text)
 
+    def draw_agents_stacked(self, cr, w):
+        """Agents icon, then one row per limit: short label, meter, percent."""
+        white, urgent = self.config.text, self.config.urgent
+        meter_w = self.meter_width(w)
+        label_w, pct_w = self.stacked_columns(w)
+        x0 = w.rect[0] + KEY_PAD
+        self.draw_text(cr, USAGE_ICON, x0 + 14 + 15, self.short / 2, 30)
+        limits = self.limits_for(w)
+        x = x0 + 14 + 30 + 14
+        for i, (label, frac) in enumerate(limits):
+            cy = self.short / 2 + (i - (len(limits) - 1) / 2) * 22
+            alarm = frac is not None and frac >= METER_ALARM
+            self.draw_text_at(cr, self.short_label(w, label), x, cy, STACKED_FONT, white)
+            mx = x + label_w + 10
+            self.rounded_rect(cr, mx, cy - 4, meter_w, 8, 4)
+            cr.set_source_rgba(*self.color(white, 0.2))
+            cr.fill()
+            if frac:
+                self.rounded_rect(cr, mx, cy - 4, max(8, meter_w * min(frac, 1.0)), 8, 4)
+                cr.set_source_rgba(*self.color(urgent if alarm else white))
+                cr.fill()
+            pct = "—" if frac is None else f"{round(frac * 100)}%"
+            self.draw_text_at(cr, pct, mx + meter_w + 10 + pct_w, cy, STACKED_FONT,
+                              urgent if alarm else white, align="right")
+
     def draw_agents(self, cr, w):
         """Key-style container: agents icon, then one meter per limit."""
+        if w.spec.get("layout") == "stacked":
+            self.draw_key_face(cr, w)
+            self.draw_agents_stacked(cr, w)
+            return
         gap, icon_w, meter_w = 24, 30, self.meter_width(w)
         white, urgent = self.config.text, self.config.urgent
         self.draw_key_face(cr, w)

@@ -69,7 +69,7 @@ widgets set a `type` and can use any id.
 | Widget | Options |
 |---|---|
 | `touchbar.esc` | `width` (140). Sends Esc. |
-| `touchbar.agents` | `agent` (`"claude"`; any record in `~/.local/state/omarchy/agents/usage/`), `meterWidth` (320), `onTap` (toggles the Omarchy agents panel; `""` for nothing). |
+| `touchbar.agents` | `agent` (`"claude"`; any record in `~/.local/state/omarchy/agents/usage/`), `layout` (`"row"`: meters side by side with their names above; `"stacked"`: meters on top of each other with short labels on the left), `meterWidth` (320, or 200 stacked), `shortLabels` (stacked labels, default `{"Session": "5h", "Weekly": "7d"}`), `onTap` (toggles the Omarchy agents panel; `""` for nothing). |
 | `touchbar.mic` | Mic mute toggle with a live waveform while an app records. See [Microphone](#microphone). |
 | `touchbar.media` | Previous, play/pause and next keys and the current track. See [Media](#media). |
 | `touchbar.cpu`, `.memory`, `.gpu`, `.network`, `.disk`, `.battery`, `.fan` | A label, a btop-style dot graph of recent history, and the current value. See [Graphs](#graphs). |

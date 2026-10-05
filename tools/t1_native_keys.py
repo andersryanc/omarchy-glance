@@ -167,8 +167,9 @@ def main():
     cmd = args[0]
     if cmd == "status":
         status(t1)
-    elif cmd == "config" and len(args) == 2:
-        open(f"{t1}/bConfigurationValue", "w").write(args[1])
+    elif cmd == "config" and len(args) == 2 and args[1] in ("1", "2", "3"):
+        with open(f"{t1}/bConfigurationValue", "w") as f:
+            f.write(args[1])
         print(f"configuration now {read(f'{t1}/bConfigurationValue')}")
     elif cmd == "mode" and len(args) == 2 and args[1] in MODES:
         set_mode(t1, MODES[args[1]])

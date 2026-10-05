@@ -288,11 +288,22 @@ class Battery(Source):
         with open(os.path.join(self.find_battery(), name)) as f:
             return f.read().strip()
 
+    def charge(self):
+        """Percent of what the battery holds now, as UPower and the Omarchy bar
+        report it. Some drivers' `capacity` (e.g. this Mac's) is relative to
+        the design capacity instead, which reads low on a worn battery."""
+        for now, full in (("charge_now", "charge_full"), ("energy_now", "energy_full")):
+            try:
+                return min(100, round(100 * int(self.read(now)) / int(self.read(full))))
+            except (OSError, ValueError, ZeroDivisionError):
+                continue
+        return int(self.read("capacity"))
+
     def label_text(self):
         if "label" in self.spec:
             return str(self.spec["label"])
         try:
-            capacity, status = int(self.read("capacity")), self.read("status")
+            capacity, status = self.charge(), self.read("status")
         except (OSError, ValueError):
             return "\U000F0091"                              # battery unknown
         if status == "Charging":
@@ -311,7 +322,7 @@ class Battery(Source):
                      max([10.0, *(v for v in history if v is not None)]))
 
     def sample(self):
-        capacity, status = int(self.read("capacity")), self.read("status")
+        capacity, status = self.charge(), self.read("status")
         try:
             current = int(self.read("current_now")) / 1e6        # A
             volts = int(self.read("voltage_now")) / 1e6          # V

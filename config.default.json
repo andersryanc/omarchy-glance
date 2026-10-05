@@ -21,7 +21,8 @@
   "layers": {
     "default": {
       "left": [
-        { "id": "touchbar.esc" }
+        { "id": "touchbar.esc" },
+        { "id": "touchbar.mic" }
       ],
       "right": [
         { "id": "touchbar.cpu" },
@@ -38,6 +39,9 @@
         { "id": "mute", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume mute-toggle" },
         { "id": "volume-down", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume lower", "repeat": true },
         { "id": "volume-up", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume raise", "repeat": true }
+      ],
+      "right": [
+        { "id": "touchbar.media" }
       ]
     }
   }

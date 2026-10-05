@@ -25,6 +25,9 @@ import time
 
 import cairo
 
+from mic import Mic
+from sources import SOURCES
+
 SOCK_PATH = "/run/t1bridge/touchbar.sock"
 HERE = os.path.dirname(os.path.realpath(__file__))
 DEFAULT_CONFIG = os.path.join(HERE, "config.default.json")
@@ -72,13 +75,15 @@ USAGE_DIR = os.path.expanduser("~/.local/state/omarchy/agents/usage")
 USAGE_ICON = "\U000F16A3"        # the Omarchy bar's agents glyph (Nerd Font)
 METER_ALARM = 0.9                # turn red at this fraction used, like the bar panel
 ACTIVITY = "omarchy-launch-or-focus-tui btop"   # what Super+Ctrl+T opens
+MIC_TOGGLE = "omarchy-audio-input-mute"          # what the mic-mute key runs (with OSD)
+MEDIA_STATUS = "omarchy-shell media status"      # the bar's own player selection, as JSON
+MEDIA_ACTIONS = {"previous": "omarchy-shell -q media previous",
+                 "playPause": "omarchy-shell -q media playPause",
+                 "next": "omarchy-shell -q media next"}
+ICONS = {"mic": "\U000F036C", "micMuted": "\U000F036D", "previous": "\U000F04AE",
+         "play": "\U000F040A", "pause": "\U000F03E4", "next": "\U000F04AD"}
 BTOP_THEME = os.path.expanduser("~/.config/btop/themes/current.theme")
 
-# Graph widgets: id -> (source, default label, btop theme gradient, fallback gradient)
-GRAPHS = {
-    "touchbar.cpu": ("cpu", "cpu", "cpu", ["#77ca9b", "#cbc06c", "#dc4c4c"]),
-    "touchbar.memory": ("memory", "mem", "used", ["#4897d4", "#a77fd4", "#dc4c4c"]),
-}
 
 # 5x7 glyphs for the Esc label
 GLYPHS = {
@@ -124,43 +129,6 @@ def read_btop_theme():
     return theme
 
 
-def read_cpu_times():
-    """[(busy, total)] jiffies for all CPUs, then each core, from /proc/stat."""
-    times = []
-    with open("/proc/stat") as f:
-        for line in f:
-            if not line.startswith("cpu"):
-                break
-            v = [int(n) for n in line.split()[1:]]
-            idle = v[3] + v[4]                       # idle + iowait
-            total = sum(v[:8])                       # guest time is already in user/nice
-            times.append((total - idle, total))
-    return times
-
-
-def read_memory():
-    """Fraction of RAM in use (MemTotal - MemAvailable), as btop and free count it."""
-    info = {}
-    with open("/proc/meminfo") as f:
-        for line in f:
-            key, _, rest = line.partition(":")
-            info[key] = int(rest.split()[0])
-    return 1 - info["MemAvailable"] / info["MemTotal"]
-
-
-def find_sensor(name):
-    """Path of the first temperature input of the hwmon device called `name`."""
-    for d in sorted(os.listdir("/sys/class/hwmon")):
-        path = os.path.join("/sys/class/hwmon", d)
-        try:
-            with open(os.path.join(path, "name")) as f:
-                if f.read().strip() == name:
-                    return os.path.join(path, "temp1_input")
-        except OSError:
-            continue
-    return None
-
-
 class Config:
     """A validated view of one config file."""
 
@@ -202,7 +170,7 @@ class Config:
 
 
 class Widget:
-    """One placed widget. `kind` is esc, button, command, agents, graph or spacer."""
+    """One placed widget. `kind` is esc, button, command, agents, graph, mic, media or spacer."""
 
     def __init__(self, key, layer, kind, spec):
         self.key, self.layer, self.kind, self.spec = key, layer, kind, spec
@@ -227,9 +195,13 @@ class Renderer:
 
     def init_state(self):
         self.dirty = True
+        self.damage = set()          # widget keys to redraw over the last frame
+        self.last_frame = None       # buffer id of the last submitted frame
         self.frame_id = 0
         self.widgets = []
         self.owner = {}              # contact id -> Widget it first touched
+        self.touch_x = {}            # contact id -> x where it first touched
+        self.mic = None              # Mic, while a touchbar.mic widget exists
         self.repeat_at = {}          # contact id -> monotonic time of next repeat
         self.last_input = time.monotonic()
         self.dimmed = False
@@ -241,7 +213,6 @@ class Renderer:
         self.graphs = {}             # widget key -> graph widget state
         self.theme = {}              # btop theme colours (default graph gradients)
         self.theme_mtime = None
-        self.sensors = {}            # hwmon name -> temperature input path
         self.children = []           # fire-and-forget processes to reap
         self.config_source = None    # (path, mtime) of the loaded config
         self.config = None
@@ -332,32 +303,34 @@ class Renderer:
             if state.get("proc"):
                 state["proc"].kill()
         self.commands, self.graphs = {}, {}
-        self.owner, self.repeat_at = {}, {}
+        self.owner, self.repeat_at, self.touch_x = {}, {}, {}
         self.build()
+        mics = [w for w in self.widgets if w.kind == "mic"]
+        if mics and not self.mic:
+            self.mic = Mic(self.command_env(), log, int(mics[0].spec.get("fps", 20)))
+        elif not mics and self.mic:
+            self.mic.close()
+            self.mic = None
         self.dirty = True
 
     def build(self):
-        """Create and place the widgets of both layers from the config."""
+        """Create the widgets of both layers from the config, then place them."""
         self.widgets = []
         for layer, sections in self.config.layers.items():
             for section, items in sections.items():
-                placed = []
                 for i, spec in enumerate(items):
                     kind = self.kind_of(spec)
                     if kind is None:
                         log(f"layers.{layer}.{section}[{i}]: unknown widget {spec.get('id')!r}")
                         continue
-                    placed.append(Widget(f"{layer}.{section}.{i}", layer, kind, spec))
-                self.place(placed, section)
-                self.widgets += placed
+                    self.widgets.append(Widget(f"{layer}.{section}.{i}", layer, kind, spec))
         for w in self.widgets:
-            if w.kind == "command" and w.key not in self.commands:
+            if w.kind in ("command", "media") and w.key not in self.commands:
                 self.commands[w.key] = {"text": "", "urgent": False, "next": 0.0,
                                         "proc": None, "out": b"", "started": 0.0}
             if w.kind == "graph" and w.key not in self.graphs:
-                self.graphs[w.key] = {"history": collections.deque(maxlen=self.graph_columns(w)),
-                                      "value": None, "cores": [], "temp": None,
-                                      "prev": None, "next": 0.0}
+                self.graphs[w.key] = self.graph_state(w)
+        self.relayout()
 
     def relayout(self):
         """Re-place widgets after a width change, keeping fingers attached."""
@@ -374,10 +347,10 @@ class Renderer:
         t = spec.get("type")
         if t in ("button", "command"):
             return t
-        if spec.get("id") in GRAPHS:
+        if spec.get("id") in SOURCES:
             return "graph"
-        return {"touchbar.esc": "esc", "touchbar.agents": "agents",
-                "touchbar.spacer": "spacer"}.get(spec.get("id"))
+        return {"touchbar.esc": "esc", "touchbar.agents": "agents", "touchbar.mic": "mic",
+                "touchbar.media": "media", "touchbar.spacer": "spacer"}.get(spec.get("id"))
 
     def place(self, widgets, section):
         widths = [self.width_of(w) for w in widgets]
@@ -396,6 +369,11 @@ class Renderer:
             return 14 + 30 + 14 + n * self.meter_width(w) + (n - 1) * 24 + 16 + 2 * KEY_PAD
         if w.kind == "graph":
             return sum(width for _, width in self.graph_parts(w)) + 2 * 14 + 2 * KEY_PAD
+        if w.kind == "mic":
+            extra = int(s.get("waveformWidth", 120)) + 4 if self.mic_recording(w) else 0
+            return int(s.get("width", KEY_WIDTH)) + extra
+        if w.kind == "media":
+            return 3 * int(s.get("buttonWidth", 100)) + int(s.get("titleWidth", 360))
         if w.kind == "command" and not s.get("width"):
             text = self.commands.get(w.key, {}).get("text", "")
             self.measure.select_font_face(self.config.font)
@@ -444,7 +422,7 @@ class Renderer:
         return widget in self.owner.values()
 
     # --- actions ------------------------------------------------------------
-    def press(self, w):
+    def press(self, w, lx=None):
         s = w.spec
         if w.kind == "esc":
             self.tap_key("esc")
@@ -461,6 +439,18 @@ class Renderer:
             cmd = s.get("onTap", ACTIVITY)
             if cmd:
                 self.spawn(cmd)
+        elif w.kind == "mic":
+            cmd = s.get("onTap", MIC_TOGGLE)
+            if cmd:
+                self.spawn(cmd)
+        elif w.kind == "media":
+            zone = self.media_zone(w, lx)
+            cmd = MEDIA_ACTIONS.get(zone) if zone != "title" else s.get("onTap")
+            if cmd:
+                self.spawn(cmd)
+                state = self.commands[w.key]
+                if not state["proc"]:
+                    state["next"] = time.monotonic() + 0.3   # show the new state soon
         elif w.kind == "command" and s.get("onTap"):
             self.spawn(s["onTap"])
 
@@ -491,11 +481,15 @@ class Renderer:
     # --- command widgets ----------------------------------------------------
     def run_commands(self, now):
         self.children = [p for p in self.children if p.poll() is None]
+        visible = self.visible_widgets()
         for w in self.widgets:
-            if w.kind != "command" or not w.spec.get("exec"):
+            cmd = MEDIA_STATUS if w.kind == "media" else w.spec.get("exec") if w.kind == "command" else None
+            if not cmd:
                 continue
             state = self.commands[w.key]
             proc = state["proc"]
+            if w.kind == "media" and not proc and w not in visible:
+                continue                 # only ask for player state while it's on screen
             if proc and now - state["started"] > COMMAND_TIMEOUT:
                 log(f"{w.spec.get('id')}: command timed out")
                 proc.kill()
@@ -503,14 +497,20 @@ class Renderer:
             elif not proc and now >= state["next"]:
                 try:
                     state["proc"] = subprocess.Popen(
-                        ["bash", "-c", w.spec["exec"]], env=self.command_env(),
+                        ["bash", "-c", cmd], env=self.command_env(),
                         stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                         stderr=subprocess.DEVNULL, start_new_session=True)
                     state["out"], state["started"] = b"", now
                 except OSError as e:
                     log(f"{w.spec.get('id')}: could not run: {e}")
-                interval = float(w.spec.get("interval", 0))
+                interval = float(w.spec.get("interval", 1 if w.kind == "media" else 0))
                 state["next"] = now + interval if interval > 0 else float("inf")
+
+    def polled_commands(self):
+        """Command and media widgets waiting for their next run (media only while shown)."""
+        visible = self.visible_widgets()
+        return [w for w in self.widgets if w.key in self.commands and not self.commands[w.key]["proc"]
+                and (w.kind != "media" or w in visible)]
 
     def command_fds(self):
         return {s["proc"].stdout.fileno(): key for key, s in self.commands.items() if s["proc"]}
@@ -532,8 +532,17 @@ class Renderer:
         except subprocess.TimeoutExpired:
             proc.kill()
             proc.wait()
-        # Plain text, or Waybar-style JSON: {"text": ..., "class": ...}
         out = state["out"].decode("utf-8", "replace").strip()
+        if w.kind == "media":
+            try:
+                media = json.loads(out) if out.startswith("{") else {}
+            except ValueError:
+                media = {}
+            if media != state.get("media"):
+                state["media"] = media
+                self.redraw(w)
+            return
+        # Plain text, or Waybar-style JSON: {"text": ..., "class": ...}
         text, urgent = out.splitlines()[0] if out else "", False
         if out.startswith("{"):
             try:
@@ -548,7 +557,7 @@ class Renderer:
             state["text"], state["urgent"] = text, urgent
             if not w.spec.get("width"):
                 self.relayout()
-            self.dirty = True
+            self.redraw(w)
 
     # --- agent usage records -----------------------------------------------
     def poll_usage(self):
@@ -586,6 +595,98 @@ class Renderer:
     def meter_width(w):
         return int(w.spec.get("meterWidth", 320))
 
+    # --- mic and media widgets ---------------------------------------------
+    def update_mic(self, now):
+        if not self.mic:
+            return
+        self.mic.tick(now)
+        if self.mic.changed:
+            self.mic.changed = False
+            mics = [w for w in self.widgets if w.kind == "mic"]
+            if any(self.width_of(w) != w.rect[2] - w.rect[0] for w in mics):
+                self.relayout()          # the waveform appeared or went away
+            for w in mics:
+                self.redraw(w)
+
+    def mic_recording(self, w):
+        """Show the waveform: another app is recording and the mic is live."""
+        m = self.mic
+        return bool(m and m.in_use and not m.muted and w.spec.get("waveform", True))
+
+    def draw_mic(self, cr, w):
+        """Mic key: muted/live icon, plus a mirrored live waveform while recording."""
+        s, m = w.spec, self.mic
+        x0, y0, x1, y1 = w.rect
+        self.draw_key_face(cr, w)
+        muted = m is None or m.muted is not False
+        active = hex_rgb(s.get("activeColor"), self.config.urgent)
+        if muted:
+            icon, rgb = ICONS["micMuted"], hex_rgb(s.get("mutedColor"), (0x80, 0x80, 0x80))
+        else:
+            icon, rgb = ICONS["mic"], active if m.in_use else self.config.text
+        key_w = int(s.get("width", KEY_WIDTH))
+        self.draw_text(cr, icon, x0 + key_w / 2, (y0 + y1) / 2, float(s.get("iconSize", 30)), rgb)
+        if self.mic_recording(w):
+            sp = self.graph_spacing(w)
+            columns = int(s.get("waveformWidth", 120)) // sp
+            levels = list(m.levels)[-columns:]
+            # Grid-free dots in the active colour, growing out from the middle.
+            spec = dict(s, grid=False)
+            dots = Widget(w.key, w.layer, w.kind, spec)
+            for half in (1, -1):
+                self.draw_dots(cr, dots, x0 + key_w - 16, levels, columns, [active], half)
+
+    def media_zone(self, w, lx):
+        """Which part of a media widget x falls in: previous, playPause, next, title."""
+        bw = int(w.spec.get("buttonWidth", 100))
+        if lx is None:
+            return None
+        i = int((lx - w.rect[0]) // bw)
+        return ("previous", "playPause", "next")[i] if 0 <= i < 3 else "title"
+
+    def draw_media(self, cr, w):
+        """Previous / play-pause / next keys and the track, from Omarchy's media service."""
+        s = w.spec
+        media = self.commands[w.key].get("media") or {}
+        x0, y0, x1, y1 = w.rect
+        bw = int(s.get("buttonWidth", 100))
+        pressed = {self.media_zone(w, self.touch_x.get(cid))
+                   for cid, o in self.owner.items() if o is w}
+        zones = [("previous", ICONS["previous"], media.get("canGoPrevious")),
+                 ("playPause", ICONS["pause"] if media.get("playing") else ICONS["play"],
+                  media.get("canTogglePlaying")),
+                 ("next", ICONS["next"], media.get("canGoNext"))]
+        for i, (zone, icon, enabled) in enumerate(zones):
+            zx = x0 + i * bw
+            self.draw_face(cr, zx, y0, zx + bw, y1, zone in pressed)
+            self.draw_text(cr, icon, zx + bw / 2, (y0 + y1) / 2, float(s.get("iconSize", 28)),
+                           self.config.text if enabled else (0x60, 0x60, 0x60))
+        tx = x0 + 3 * bw
+        self.draw_face(cr, tx, y0, x1, y1, "title" in pressed and bool(s.get("onTap")))
+        cr.save()
+        cr.rectangle(tx + KEY_PAD + 12, y0, x1 - tx - 2 * KEY_PAD - 24, y1 - y0)
+        cr.clip()
+        if media.get("hasMedia"):
+            title = media.get("title") or media.get("identity") or "Unknown"
+            artist = media.get("artist") or media.get("identity") or ""
+            limit = x1 - tx - 2 * KEY_PAD - 24
+            self.draw_text_at(cr, self.ellipsize(cr, title, 17, limit), tx + KEY_PAD + 12,
+                              y0 + 22 if artist else self.short / 2, 17, self.config.text)
+            if artist:
+                self.draw_text_at(cr, self.ellipsize(cr, artist, 14, limit), tx + KEY_PAD + 12,
+                                  y0 + 41, 14, (0xA0, 0xA0, 0xA0))
+        else:
+            self.draw_text_at(cr, "No media", tx + KEY_PAD + 12, self.short / 2, 17, (0x80, 0x80, 0x80))
+        cr.restore()
+
+    def ellipsize(self, cr, text, size, limit):
+        cr.set_font_size(size)
+        if cr.text_extents(text).x_advance <= limit:
+            return text
+        while text and cr.text_extents(text + "…").x_advance > limit:
+            text = text[:-1]
+        return text.rstrip() + "…"
+
     # --- graph widgets (cpu, memory) ----------------------------------------
     def poll_theme(self):
         try:
@@ -605,36 +706,22 @@ class Renderer:
                 continue
             g["next"] = now + max(0.25, float(w.spec.get("interval", 1)))
             try:
-                self.sample(w, g)
+                values = g["source"].sample()
+                if values is not None:
+                    for history, v in zip(g["history"], values):
+                        history.append(v)
                 g.pop("error", None)
             except (OSError, ValueError, KeyError, IndexError, ZeroDivisionError) as e:
                 if not g.get("error"):
                     log(f"{w.spec.get('id')}: {e}")
                 g["error"] = True
-            self.dirty = True
+            self.redraw(w)
 
-    def sample(self, w, g):
-        source = GRAPHS[w.spec["id"]][0]
-        if source == "cpu":
-            times = read_cpu_times()
-            prev, g["prev"] = g["prev"], times
-            if not prev:
-                return                   # usage needs two readings
-            fracs = [(b - pb) / (t - pt) if t > pt else 0.0
-                     for (b, t), (pb, pt) in zip(times, prev)]
-            g["value"], g["cores"] = fracs[0], fracs[1:]
-        else:
-            g["value"] = read_memory()
-        g["history"].append(g["value"])
-        if w.spec.get("temperature"):
-            name = str(w.spec.get("sensor", "coretemp"))
-            if name not in self.sensors:
-                self.sensors[name] = find_sensor(name)
-                if not self.sensors[name]:
-                    log(f"{w.spec.get('id')}: no hwmon sensor named {name!r}")
-            if self.sensors[name]:
-                with open(self.sensors[name]) as f:
-                    g["temp"] = int(f.read()) / 1000
+    def graph_state(self, w):
+        source = SOURCES[w.spec["id"]](w.spec)
+        n = 2 if source.mirrored else 1
+        return {"source": source, "next": 0.0,
+                "history": [collections.deque(maxlen=self.graph_columns(w)) for _ in range(n)]}
 
     def graph_spacing(self, w):
         return max(2, int(w.spec.get("dotSpacing", 4)))
@@ -642,105 +729,125 @@ class Renderer:
     def graph_columns(self, w):
         return max(1, int(w.spec.get("graphWidth", 100)) // self.graph_spacing(w))
 
-    def graph_gradient(self, w):
-        stops = w.spec.get("gradient")
-        if not stops:
-            name, fallback = GRAPHS[w.spec["id"]][2:]
-            stops = [self.theme.get(f"{name}_{k}") for k in ("start", "mid", "end")]
-            stops = [s for s in stops if s] or fallback
-        return [hex_rgb(s, (0xFF, 0xFF, 0xFF)) for s in stops]
+    def graph_gradients(self, w, source):
+        """One list of RGB stops per series: the config's, else btop's theme."""
+        custom = w.spec.get("gradient")
+        if custom and isinstance(custom[0], str):
+            custom = [custom]
+        result = []
+        for i, (name, fallback) in enumerate(source.gradients):
+            stops = custom[min(i, len(custom) - 1)] if custom else None
+            if not stops:
+                stops = [self.theme.get(f"{name}_{k}") for k in ("start", "mid", "end")]
+                stops = [s for s in stops if s] or fallback
+            result.append([hex_rgb(s, (0xFF, 0xFF, 0xFF)) for s in stops])
+        return result
 
     def graph_parts(self, w):
         """[(part, width)] left to right: label, graph, cores, value."""
         s, sp, gap = w.spec, self.graph_spacing(w), 12
-        label = s.get("label", GRAPHS[s["id"]][1])
+        source = self.graphs[w.key]["source"]
+        label = source.label_text()
         self.measure.select_font_face(self.config.font)
         parts = []
         if label:
             self.measure.set_font_size(float(s.get("fontSize", 18)))
-            parts.append(("label", int(self.measure.text_extents(str(label)).x_advance) + gap))
+            parts.append(("label", int(self.measure.text_extents(label).x_advance) + gap))
         parts.append(("graph", self.graph_columns(w) * sp))
-        if s.get("cores") and GRAPHS[s["id"]][0] == "cpu":
+        if s.get("cores") and hasattr(source, "cores"):
             n = os.cpu_count() or 1
             parts.append(("cores", gap + (3 * n - 1) * sp))
-        if s.get("showValue", True) or s.get("temperature"):
-            size = 15 if s.get("temperature") else float(s.get("fontSize", 18))
-            self.measure.set_font_size(size)
-            widest = max(self.measure.text_extents(t).x_advance for t in ("100%", "100°"))
-            parts.append(("value", gap + int(widest)))
+        if s.get("showValue", True):
+            widest = source.widest()
+            self.measure.set_font_size(15 if len(widest) > 1 else float(s.get("fontSize", 18)))
+            parts.append(("value", gap + int(max(self.measure.text_extents(t).x_advance for t in widest))))
         return parts
 
-    def draw_dots(self, cr, w, x, values, columns, stops):
-        """btop-style dot columns: one per value, newest on the right."""
+    def draw_dots(self, cr, w, x, values, columns, stops, half=0):
+        """btop-style dot columns, one per value (0-1), newest on the right.
+
+        half=0 fills the full height from the bottom; 1 and -1 use the top half
+        growing up from the middle, or the bottom half growing down.
+        """
         sp = self.graph_spacing(w)
         rows = (self.short - 2 * KEY_PAD - 16) // sp + 1
-        bottom = (self.short + (rows - 1) * sp) / 2
+        mid = self.short / 2
+        if half:
+            rows //= 2
+            base, step = mid - half * sp / 2, -half * sp
+        else:
+            base, step = mid + (rows - 1) * sp / 2, -sp
         radius = float(w.spec.get("dotSize", sp * 0.32))
         bars = w.spec.get("style") == "bars"
         grid = w.spec.get("grid", True)
         values = list(values)[-columns:]
         values = [None] * (columns - len(values)) + values
+        lit_rows, empty = [[] for _ in range(rows)], []
         for col, v in enumerate(values):
             cx = x + col * sp + sp / 2
             lit = 0 if v is None else min(rows, round(v * rows) or (1 if v > 0.01 else 0))
             if bars:
                 if lit:
-                    top = bottom - (lit - 0.5) * sp
-                    grad = cairo.LinearGradient(0, bottom + sp / 2, 0, bottom - (rows - 0.5) * sp)
+                    y0, y1 = base - step / 2, base + (lit - 0.5) * step
+                    grad = cairo.LinearGradient(0, y0, 0, base + (rows - 0.5) * step)
                     for i, rgb in enumerate(stops):
                         grad.add_color_stop_rgba(i / max(1, len(stops) - 1), *self.color(rgb))
-                    cr.rectangle(cx - sp / 2 + 0.5, top, sp - 1, bottom + sp / 2 - top)
+                    cr.rectangle(cx - sp / 2 + 0.5, min(y0, y1), sp - 1, abs(y1 - y0))
                     cr.set_source(grad)
                     cr.fill()
                 continue
             for row in range(rows):
                 if row < lit:
-                    cr.set_source_rgba(*self.color(lerp_rgb(stops, row / max(1, rows - 1))))
+                    lit_rows[row].append(cx)
                 elif grid:
-                    cr.set_source_rgba(*self.color(self.config.text, 0.12))
-                else:
-                    continue
-                cr.arc(cx, bottom - row * sp, radius, 0, 6.2832)
+                    empty.append((cx, base + row * step))
+        # One path per colour: a fill per dot is what makes this slow.
+        if empty:
+            for cx, cy in empty:
+                cr.new_sub_path()
+                cr.arc(cx, cy, radius, 0, 6.2832)
+            cr.set_source_rgba(*self.color(self.config.text, 0.12))
+            cr.fill()
+        for row, xs in enumerate(lit_rows):
+            if xs:
+                for cx in xs:
+                    cr.new_sub_path()
+                    cr.arc(cx, base + row * step, radius, 0, 6.2832)
+                cr.set_source_rgba(*self.color(lerp_rgb(stops, row / max(1, rows - 1))))
                 cr.fill()
 
     def draw_graph(self, cr, w):
         """Key-style container: label, history graph, per-core meters, current value."""
         s, g, sp = w.spec, self.graphs[w.key], self.graph_spacing(w)
-        stops = self.graph_gradient(w)
+        source = g["source"]
+        gradients = self.graph_gradients(w, source)
         self.draw_key_face(cr, w)
         x, cy = w.rect[0] + KEY_PAD + 14, self.short / 2
         for part, width in self.graph_parts(w):
             if part == "label":
-                self.draw_text_at(cr, str(s.get("label", GRAPHS[s["id"]][1])), x, cy,
+                self.draw_text_at(cr, source.label_text(), x, cy,
                                   float(s.get("fontSize", 18)), self.config.text)
             elif part == "graph":
-                self.draw_dots(cr, w, x, g["history"], self.graph_columns(w), stops)
+                for i, history in enumerate(g["history"]):
+                    scale = source.scale(i, history) or 1.0
+                    values = [None if v is None else v / scale for v in history]
+                    half = (1 if i == 0 else -1) if source.mirrored else 0
+                    self.draw_dots(cr, w, x, values, self.graph_columns(w), gradients[i], half)
             elif part == "cores":
                 cx = x + 12
-                for frac in g["cores"] or [None] * (os.cpu_count() or 1):
-                    self.draw_dots(cr, w, cx, [frac, frac], 2, stops)
+                for frac in source.cores or [None] * (os.cpu_count() or 1):
+                    self.draw_dots(cr, w, cx, [frac, frac], 2, gradients[0])
                     cx += 3 * sp
             elif part == "value":
-                self.draw_values(cr, w, g, x + width)
+                self.draw_values(cr, w, source.lines, x + width)
             x += width
 
-    def draw_values(self, cr, w, g, right):
-        """Current value (and temperature), right-aligned so the % sign stays put."""
-        s, cy = w.spec, self.short / 2
-        alarm = float(s.get("alarm", METER_ALARM))
-        lines = []
-        if s.get("showValue", True):
-            v = g["value"]
-            lines.append(("—" if v is None else f"{round(v * 100)}%",
-                          v is not None and v >= alarm))
-        if s.get("temperature"):
-            t = g["temp"]
-            lines.append(("—" if t is None else f"{round(t)}°",
-                          t is not None and t >= float(s.get("temperatureAlarm", 90))))
-        size = 15 if len(lines) > 1 else float(s.get("fontSize", 18))
-        step = 18 if len(lines) > 1 else 0
+    def draw_values(self, cr, w, lines, right):
+        """Value lines, right-aligned so the units stay put."""
+        lines = lines or [("—", False)]
+        size = 15 if len(lines) > 1 else float(w.spec.get("fontSize", 18))
         for i, (text, urgent) in enumerate(lines):
-            y = cy + (i - (len(lines) - 1) / 2) * step
+            y = self.short / 2 + (i - (len(lines) - 1) / 2) * 18
             self.draw_text_at(cr, text, right, y, size,
                               self.config.urgent if urgent else self.config.text, align="right")
 
@@ -755,36 +862,48 @@ class Renderer:
         cr.show_text(text)
 
     # --- drawing ------------------------------------------------------------
-    def draw(self, buf):
+    def background(self):
         c = self.config
         if c.debug_background:
-            bg = c.debug_bg_fn if self.fn else c.debug_bg
-        else:
-            bg = c.background
-        self.fill(buf, 0, 0, self.long, self.short, bg)
+            return c.debug_bg_fn if self.fn else c.debug_bg
+        return c.background
+
+    def draw(self, buf, only=None):
+        """Draw the frame, or with `only` just those widgets over the previous frame."""
+        c = self.config
         widgets = self.visible_widgets()
+        if only is None:
+            self.fill(buf, 0, 0, self.long, self.short, self.background())
+        else:
+            widgets = [w for w in widgets if w.key in only]
+            for w in widgets:
+                self.fill(buf, *w.rect, self.background())
         for w in widgets:
             if w.kind == "esc":
                 self.draw_esc(buf, w)
         surface = self.surfaces.get(self.drawing)
-        if surface and not self.portrait and not FLIP_X and not FLIP_Y:
+        if surface and self.cairo_ok():
             surface.mark_dirty()     # we wrote pixels behind cairo's back
             cr = cairo.Context(surface)
             cr.select_font_face(c.font)
             for w in widgets:
-                if w.kind == "button":
-                    self.draw_button(cr, w)
-                elif w.kind == "command":
-                    self.draw_command(cr, w)
-                elif w.kind == "agents":
-                    self.draw_agents(cr, w)
-                elif w.kind == "graph":
-                    self.draw_graph(cr, w)
+                draw = getattr(self, f"draw_{w.kind}", None)
+                if w.kind not in ("esc", "spacer") and draw:
+                    cr.save()
+                    cr.rectangle(*w.rect[:2], w.rect[2] - w.rect[0], w.rect[3] - w.rect[1])
+                    cr.clip()
+                    draw(cr, w)
+                    cr.restore()
             surface.flush()
-        if c.test_pattern:
-            self.draw_test_pattern(buf)
-        if c.border or c.test_pattern:
-            self.draw_border(buf)
+        if only is None:
+            if c.test_pattern:
+                self.draw_test_pattern(buf)
+            if c.border or c.test_pattern:
+                self.draw_border(buf)
+        return widgets
+
+    def cairo_ok(self):
+        return not self.portrait and not FLIP_X and not FLIP_Y
 
     def draw_esc(self, buf, w):
         x0, y0, x1, y1 = w.rect
@@ -818,10 +937,12 @@ class Renderer:
         cr.close_path()
 
     def draw_key_face(self, cr, w):
-        x0, y0, x1, y1 = w.rect
+        self.draw_face(cr, *w.rect, self.pressed(w))
+
+    def draw_face(self, cr, x0, y0, x1, y1, pressed=False):
         p = KEY_PAD
         cr.rectangle(x0 + p, y0 + p, x1 - x0 - 2 * p, y1 - y0 - 2 * p)
-        cr.set_source_rgba(*self.color(self.config.key_pressed if self.pressed(w) else self.config.key))
+        cr.set_source_rgba(*self.color(self.config.key_pressed if pressed else self.config.key))
         cr.fill()
 
     def draw_text(self, cr, text, cx, cy, size, rgb=None):
@@ -905,15 +1026,37 @@ class Renderer:
             self.fill(buf, x - 3, 0, x + 3, self.short, white)
 
     def present(self):
-        if not self.dirty or not self.free:
+        """Submit a frame: in full, or just the widgets in self.damage."""
+        if not (self.dirty or self.damage) or not self.free:
             return
         buf_id = self.free.pop(0)
         self.drawing = buf_id
-        self.draw(self.buffers[buf_id])
+        buf = self.buffers[buf_id]
+        c = self.config
+        partial = (not self.dirty and self.last_frame is not None and self.cairo_ok()
+                   and not c.test_pattern and not c.border)
+        rects = []
+        if partial:
+            buf[:] = self.buffers[self.last_frame]       # buffers hold complete frames
+            for w in self.draw(buf, only=self.damage):
+                x0, x1 = max(0, w.rect[0]), min(self.w, w.rect[2])
+                if x0 < x1:
+                    rects.append((x0, 0, x1 - x0, self.h))
+        else:
+            self.draw(buf)
         self.frame_id += 1
-        self.send(SUBMIT_FRAME, struct.pack("<IQI", buf_id, self.frame_id, 0),
-                  what=f"submit frame {self.frame_id}")
+        payload = struct.pack("<IQI", buf_id, self.frame_id, len(rects))
+        payload += b"".join(struct.pack("<IIII", *r) for r in rects[:64])
+        if len(rects) > 64:
+            payload = struct.pack("<IQI", buf_id, self.frame_id, 0)
+        self.send(SUBMIT_FRAME, payload, what=f"submit frame {self.frame_id}")
+        self.last_frame = buf_id
         self.dirty = False
+        self.damage = set()
+
+    def redraw(self, w):
+        """Mark one widget for a partial redraw."""
+        self.damage.add(w.key)
 
     # --- events -------------------------------------------------------------
     def on_input(self, payload):
@@ -931,6 +1074,7 @@ class Renderer:
         for cid in list(self.owner):
             if cid not in touching:
                 del self.owner[cid]
+                self.touch_x.pop(cid, None)
                 self.repeat_at.pop(cid, None)
         now = time.monotonic()
         for cid, (lx, ly) in touching.items():
@@ -942,7 +1086,8 @@ class Renderer:
                            if w.kind != "spacer" and w.hit(lx, ly)), None)
             if widget:
                 self.owner[cid] = widget
-                self.press(widget)
+                self.touch_x[cid] = lx
+                self.press(widget, lx)
                 if widget.repeats:
                     self.repeat_at[cid] = now + self.config.repeat_delay
 
@@ -993,6 +1138,7 @@ class Renderer:
                 next_poll = now + POLL_SECONDS
             self.run_commands(now)
             self.sample_graphs(now)
+            self.update_mic(now)
             self.run_repeats(now)
             idle = self.config.idle_dim
             if idle > 0 and not self.dimmed and now >= self.last_input + idle:
@@ -1000,18 +1146,22 @@ class Renderer:
                 self.dirty = True
             self.present()
             deadlines = [next_poll, *self.repeat_at.values(),
-                         *(s["next"] for s in self.commands.values() if not s["proc"]),
+                         *(self.commands[w.key]["next"] for w in self.polled_commands()),
                          *(g["next"] for g in self.graphs.values())]
+            if self.mic:
+                deadlines.append(self.mic.deadline())
             if idle > 0 and not self.dimmed:
                 deadlines.append(self.last_input + idle)
             timeout = max(0.0, min(deadlines) - now)
-            fds = self.command_fds()
+            fds = {fd: (lambda k=key: self.read_command(k)) for fd, key in self.command_fds().items()}
+            if self.mic:
+                fds.update(self.mic.fds())
             ready, _, _ = select.select([self.sock, *fds], [], [], timeout)
             for fd in ready:
                 if fd is self.sock:
                     self.handle(*self.recv())
                 else:
-                    self.read_command(fds[fd])
+                    fds[fd]()
 
 
 if __name__ == "__main__":

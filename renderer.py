@@ -79,6 +79,11 @@ STACKED_FONT = 14
 ACTIVITY = "omarchy-launch-or-focus-tui btop"   # what Super+Ctrl+T opens
 MIC_TOGGLE = "omarchy-audio-input-mute"          # what the mic-mute key runs (with OSD)
 MEDIA_STATUS = "omarchy-shell media status"      # the bar's own player selection, as JSON
+# Players announce changes over MPRIS; re-read the status when they do.
+MEDIA_WATCH = ["dbus-monitor", "--session",
+               "type='signal',path='/org/mpris/MediaPlayer2',interface='org.freedesktop.DBus.Properties'",
+               "type='signal',interface='org.freedesktop.DBus',member='NameOwnerChanged',"
+               "arg0namespace='org.mpris.MediaPlayer2'"]
 MEDIA_ACTIONS = {"previous": "omarchy-shell -q media previous",
                  "playPause": "omarchy-shell -q media playPause",
                  "next": "omarchy-shell -q media next"}
@@ -204,6 +209,8 @@ class Renderer:
         self.owner = {}              # contact id -> Widget it first touched
         self.touch_x = {}            # contact id -> x where it first touched
         self.mic = None              # Mic, while a touchbar.mic widget exists
+        self.media_watch = None      # dbus-monitor for player changes, while a media widget exists
+        self.media_watch_at = 0.0    # earliest (re)start
         self.repeat_at = {}          # contact id -> monotonic time of next repeat
         self.last_input = time.monotonic()
         self.dimmed = False
@@ -509,7 +516,7 @@ class Renderer:
                     state["out"], state["started"] = b"", now
                 except OSError as e:
                     log(f"{w.spec.get('id')}: could not run: {e}")
-                interval = float(w.spec.get("interval", 1 if w.kind == "media" else 0))
+                interval = float(w.spec.get("interval", 30 if w.kind == "media" else 0))
                 state["next"] = now + interval if interval > 0 else float("inf")
 
     def polled_commands(self):
@@ -618,6 +625,7 @@ class Renderer:
     def update_mic(self, now):
         if not self.mic:
             return
+        self.mic.set_wanted(any(w.kind == "mic" for w in self.visible_widgets()))
         self.mic.tick(now)
         if self.mic.changed:
             self.mic.changed = False
@@ -670,6 +678,36 @@ class Renderer:
         columns = int(s.get("waveformWidth", 120)) // sp
         right = wave_x + (columns - 1) * sp + sp / 2 + radius   # last dot's ink
         return left + icon_w / 2, wave_x, round(right + pad + KEY_PAD)
+
+    def update_media_watch(self, now):
+        want = any(w.kind == "media" for w in self.widgets)
+        p = self.media_watch
+        if p and (not want or p.poll() is not None):
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+            self.media_watch = None
+        if want and not self.media_watch and now >= self.media_watch_at:
+            self.media_watch_at = now + 5
+            try:
+                self.media_watch = subprocess.Popen(
+                    MEDIA_WATCH, env=self.command_env(), stdin=subprocess.DEVNULL,
+                    stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+            except OSError as e:
+                log(f"media: could not run dbus-monitor: {e}")
+
+    def read_media_watch(self):
+        chunk = os.read(self.media_watch.stdout.fileno(), 65536)
+        if not chunk:
+            self.media_watch.wait()
+            self.media_watch = None
+            return
+        if b"PropertiesChanged" in chunk or b"NameOwnerChanged" in chunk:
+            soon = time.monotonic() + 0.15
+            for w in self.widgets:
+                if w.kind == "media":
+                    state = self.commands[w.key]
+                    state["next"] = min(state["next"], soon)
 
     def media_zone(self, w, lx):
         """Which part of a media widget x falls in: previous, playPause, next, title."""
@@ -1229,6 +1267,7 @@ class Renderer:
             self.run_commands(now)
             self.sample_graphs(now)
             self.update_mic(now)
+            self.update_media_watch(now)
             self.run_repeats(now)
             idle = self.config.idle_dim
             if idle > 0 and not self.dimmed and now >= self.last_input + idle:
@@ -1240,12 +1279,16 @@ class Renderer:
                          *(g["next"] for g in self.graphs.values())]
             if self.mic:
                 deadlines.append(self.mic.deadline())
+            if not self.media_watch and any(w.kind == "media" for w in self.widgets):
+                deadlines.append(self.media_watch_at)
             if idle > 0 and not self.dimmed:
                 deadlines.append(self.last_input + idle)
             timeout = max(0.0, min(deadlines) - now)
             fds = {fd: (lambda k=key: self.read_command(k)) for fd, key in self.command_fds().items()}
             if self.mic:
                 fds.update(self.mic.fds())
+            if self.media_watch:
+                fds[self.media_watch.stdout.fileno()] = self.read_media_watch
             ready, _, _ = select.select([self.sock, *fds], [], [], timeout)
             for fd in ready:
                 if fd is self.sock:

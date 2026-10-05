@@ -35,6 +35,7 @@ class Mic:
         self.refresh_at = 0.0
         self.sub_at = 0.0
         self.changed = True          # state or levels changed since the renderer looked
+        self.wanted = True           # a mic widget is on screen; levels are only captured then
 
     def close(self):
         for p in (self.sub, self.rec):
@@ -70,6 +71,11 @@ class Mic:
         if now >= self.refresh_at:
             self.refresh_at = now + RECHECK_SECONDS
             self.refresh()
+
+    def set_wanted(self, wanted):
+        if wanted != self.wanted:
+            self.wanted = wanted
+            self.refresh_at = 0.0    # start or stop the level meter now
 
     def deadline(self):
         return min(self.refresh_at, self.sub_at if not self.sub else float("inf"))
@@ -116,7 +122,7 @@ class Mic:
         if (muted, in_use) != (self.muted, self.in_use):
             self.muted, self.in_use = muted, in_use
             self.changed = True
-        if in_use and not muted and source:
+        if in_use and not muted and source and self.wanted:
             if not self.rec:
                 self.start_levels(default)
         elif self.rec:

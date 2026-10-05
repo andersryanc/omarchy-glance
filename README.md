@@ -2,9 +2,9 @@
 
 A custom renderer for the MacBook Pro T1 Touch Bar, driven through
 [t1bridge](https://github.com/standardagents/t1bridge)'s Touch Bar hardware IPC
-(`t1bridge-interfaces.md`). By default it draws an Esc key, a mic-mute key with
-a live waveform, btop-style CPU and memory graphs and a Claude usage widget,
-and while Fn is held, brightness, volume and media keys. Everything on the bar
+(`t1bridge-interfaces.md`). By default it draws an Esc key, media keys,
+btop-style CPU and memory graphs and a Claude usage widget, and while Fn is
+held, brightness and volume keys and a mic-mute key with a live waveform. Everything on the bar
 comes from a JSON config.
 
 ## Switching renderers
@@ -135,8 +135,9 @@ mic, the icon turns red and a live waveform appears next to it.
 
 The waveform needs its own small capture of the mic. To avoid holding the mic
 open for the Touch Bar alone, that capture runs only while another app is
-recording and the mic is live, and stops within a fraction of a second after
-it ends. It shows up in mixers as "Touch Bar level meter".
+recording, the mic is live and the key is on screen (e.g. while Fn is held,
+when it's on the Fn layer), and stops within a fraction of a second after
+any of those ends. It shows up in mixers as "Touch Bar level meter".
 
 | Option | Default | |
 |---|---|---|
@@ -151,13 +152,14 @@ it ends. It shows up in mixers as "Touch Bar level meter".
 `touchbar.media` is four keys: previous, play/pause and next, then the track
 title and artist. It uses the Omarchy shell's media service, so it controls
 the same player as the media keys and the bar, and greys out what the player
-can't do. It asks for player state only while it's on screen.
+can't do. It updates as soon as a player reports a change over MPRIS (via
+`dbus-monitor`), and asks for player state only while it's on screen.
 
 | Option | Default | |
 |---|---|---|
 | `buttonWidth`, `titleWidth` | `100`, `360` | |
 | `iconSize` | `28` | |
-| `interval` | `1` | Seconds between player state checks. |
+| `interval` | `30` | Seconds between player state checks when no change is reported. |
 | `onTap` | none | Shell command for a tap on the title, e.g. `"omarchy-shell media sourceNext"` to switch player. |
 
 ### Keyboard backlight

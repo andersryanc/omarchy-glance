@@ -22,7 +22,7 @@
     "default": {
       "left": [
         { "id": "touchbar.esc" },
-        { "id": "touchbar.mic" }
+        { "id": "touchbar.media" }
       ],
       "right": [
         { "id": "touchbar.cpu" },
@@ -41,7 +41,7 @@
         { "id": "volume-up", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume raise", "repeat": true }
       ],
       "right": [
-        { "id": "touchbar.media" }
+        { "id": "touchbar.mic" }
       ]
     }
   }

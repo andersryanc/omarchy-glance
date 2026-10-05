@@ -370,8 +370,9 @@ class Renderer:
         if w.kind == "graph":
             return sum(width for _, width in self.graph_parts(w)) + 2 * 14 + 2 * KEY_PAD
         if w.kind == "mic":
-            extra = int(s.get("waveformWidth", 120)) + 4 if self.mic_recording(w) else 0
-            return int(s.get("width", KEY_WIDTH)) + extra
+            if self.mic_recording(w):
+                return self.mic_layout(w)[2]
+            return int(s.get("width", KEY_WIDTH))
         if w.kind == "media":
             return 3 * int(s.get("buttonWidth", 100)) + int(s.get("titleWidth", 360))
         if w.kind == "command" and not s.get("width"):
@@ -624,17 +625,33 @@ class Renderer:
             icon, rgb = ICONS["micMuted"], hex_rgb(s.get("mutedColor"), (0x80, 0x80, 0x80))
         else:
             icon, rgb = ICONS["mic"], active if m.in_use else self.config.text
-        key_w = int(s.get("width", KEY_WIDTH))
-        self.draw_text(cr, icon, x0 + key_w / 2, (y0 + y1) / 2, float(s.get("iconSize", 30)), rgb)
-        if self.mic_recording(w):
-            sp = self.graph_spacing(w)
-            columns = int(s.get("waveformWidth", 120)) // sp
-            levels = list(m.levels)[-columns:]
-            # Grid-free dots in the active colour, growing out from the middle.
-            spec = dict(s, grid=False)
-            dots = Widget(w.key, w.layer, w.kind, spec)
-            for half in (1, -1):
-                self.draw_dots(cr, dots, x0 + key_w - 16, levels, columns, [active], half)
+        size = float(s.get("iconSize", 30))
+        if not self.mic_recording(w):
+            self.draw_text(cr, icon, x0 + int(s.get("width", KEY_WIDTH)) / 2, (y0 + y1) / 2, size, rgb)
+            return
+        icon_cx, wave_x, _ = self.mic_layout(w)
+        self.draw_text(cr, icon, x0 + icon_cx, (y0 + y1) / 2, size, rgb)
+        columns = int(s.get("waveformWidth", 120)) // self.graph_spacing(w)
+        # Grid-free dots in the active colour, growing out from the middle.
+        dots = Widget(w.key, w.layer, w.kind, dict(s, grid=False))
+        for half in (1, -1):
+            self.draw_dots(cr, dots, x0 + wave_x, list(m.levels)[-columns:], columns, [active], half)
+
+    def mic_layout(self, w):
+        """Recording layout, relative to the widget's left edge: (icon centre x,
+        waveform x, widget width). The icon's ink sits as far from the left of
+        the key face as the waveform's last dot does from the right."""
+        s, pad, gap = w.spec, 16, 14
+        sp = self.graph_spacing(w)
+        radius = float(s.get("dotSize", sp * 0.32))
+        self.measure.select_font_face(self.config.font)
+        self.measure.set_font_size(float(s.get("iconSize", 30)))
+        icon_w = self.measure.text_extents(ICONS["mic"]).width
+        left = KEY_PAD + pad
+        wave_x = left + icon_w + gap - (sp / 2 - radius)       # first dot's ink at the gap
+        columns = int(s.get("waveformWidth", 120)) // sp
+        right = wave_x + (columns - 1) * sp + sp / 2 + radius   # last dot's ink
+        return left + icon_w / 2, wave_x, round(right + pad + KEY_PAD)
 
     def media_zone(self, w, lx):
         """Which part of a media widget x falls in: previous, playPause, next, title."""

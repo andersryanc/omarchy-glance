@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "debug": {
+    "background": false,
+    "testPattern": false,
+    "border": false
+  },
+  "colors": {
+    "background": "#000000",
+    "debugBackground": "#106090",
+    "debugBackgroundFn": "#602090",
+    "key": "#303030",
+    "keyPressed": "#808080",
+    "text": "#ffffff",
+    "urgent": "#e05a5a"
+  },
+  "font": "JetBrainsMono Nerd Font",
+  "idleDimSeconds": 0,
+  "repeatDelay": 0.4,
+  "repeatInterval": 0.12,
+  "layers": {
+    "default": {
+      "left": [
+        { "id": "touchbar.esc" },
+        { "id": "touchbar.media" }
+      ],
+      "right": [
+        { "id": "touchbar.cpu" },
+        { "id": "touchbar.memory" },
+        { "id": "touchbar.agents", "agent": "claude", "meterWidth": 320 }
+      ]
+    },
+    "fn": {
+      "left": [
+        { "id": "touchbar.esc" },
+        { "id": "brightness-down", "type": "button", "icon": "󰃞", "iconSize": 20, "exec": "omarchy-brightness-display 5%-", "repeat": true },
+        { "id": "brightness-up", "type": "button", "icon": "󰃞", "iconSize": 32, "exec": "omarchy-brightness-display +5%", "repeat": true },
+        { "id": "touchbar.spacer", "size": 40 },
+        { "id": "mute", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume mute-toggle" },
+        { "id": "volume-down", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume lower", "repeat": true },
+        { "id": "volume-up", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume raise", "repeat": true }
+      ],
+      "right": [
+        { "id": "touchbar.mic" }
+      ]
+    }
+  }
+}

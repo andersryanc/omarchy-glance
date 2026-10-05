@@ -10,7 +10,8 @@ comes from a JSON config.
 ## Switching renderers
 
 ```
-touchbar-custom on            # use this renderer
+touchbar-custom on            # use the custom renderer (Rust, ~/Work/touchbar-rust)
+touchbar-custom on python     # use this Python renderer instead
 touchbar-custom off           # back to the t1bridge built-in bar
 touchbar-custom restart       # restart after editing renderer.py
 touchbar-custom status        # which renderer is selected and running
@@ -19,7 +20,8 @@ touchbar-custom config        # create ~/.config/touchbar/config.json if missing
 touchbar-custom config edit   # ... and open it in $EDITOR
 ```
 
-`on` points `~/.config/t1bridge/renderer` at `renderer.py` and restarts the
+`on` points `~/.config/t1bridge/renderer` at the Rust port's
+`target/release/touchbar` (`on python`: at `renderer.py`) and restarts the
 `t1-touchbar` user service. If the renderer exits, t1bridge falls back to its
 built-in bar.
 

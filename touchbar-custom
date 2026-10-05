@@ -1,18 +1,25 @@
 #!/usr/bin/env bash
-# Switch the Touch Bar between the custom renderer and the t1bridge built-in.
+# Switch the Touch Bar between the custom renderer (Rust, or the original
+# Python one with `on python`) and the t1bridge built-in.
 set -euo pipefail
 
 link="${XDG_CONFIG_HOME:-$HOME/.config}/t1bridge/renderer"
-custom="$HOME/Work/touchbar/renderer.py"
+custom="$HOME/Work/touchbar-rust/target/release/touchbar"
+python="$HOME/Work/touchbar/renderer.py"
 config="${XDG_CONFIG_HOME:-$HOME/.config}/touchbar/config.json"
 default_config="$HOME/Work/touchbar/config.default.json"
 
 case "${1:-status}" in
   on)
     mkdir -p "$(dirname "$link")"
-    ln -sfn "$custom" "$link"
+    if [[ "${2:-}" == "python" ]]; then target="$python"; else target="$custom"; fi
+    if [[ ! -x "$target" ]]; then
+      echo "$target not found; build it with: cargo build --release" >&2
+      exit 1
+    fi
+    ln -sfn "$target" "$link"
     systemctl --user restart t1-touchbar
-    echo "custom renderer on"
+    echo "custom renderer on: $target"
     ;;
   off)
     rm -f "$link"
@@ -41,7 +48,7 @@ case "${1:-status}" in
     journalctl --user -u t1-touchbar -f
     ;;
   *)
-    echo "usage: touchbar-custom [on|off|restart|status|log|config [edit]]" >&2
+    echo "usage: touchbar-custom [on [python]|off|restart|status|log|config [edit]]" >&2
     exit 1
     ;;
 esac

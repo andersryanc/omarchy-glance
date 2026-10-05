@@ -261,10 +261,18 @@ class Disk(Rates):
 
 
 class Battery(Source):
-    """Charge and state as text; the graph is power draw in watts."""
-    gradients = [("temp", TEMP)]
+    """Charge and state as text. The graph is the charge level, or with
+    "graph": "power" the power draw in watts."""
     percent = False
     path = None
+
+    @property
+    def power(self):
+        return self.spec.get("graph") == "power"
+
+    @property
+    def gradients(self):
+        return [("temp", TEMP)] if self.power else [("cpu", GREEN_RED)]
 
     def find_battery(self):
         if self.path is None:
@@ -297,6 +305,8 @@ class Battery(Source):
         return ["100%", "10:00"]
 
     def scale(self, series, history):
+        if not self.power:
+            return 1.0
         return float(self.spec.get("maxPower") or
                      max([10.0, *(v for v in history if v is not None)]))
 
@@ -314,7 +324,7 @@ class Battery(Source):
             self.lines.append((f"{watts:.1f}W", False))
         elif detail == "time":
             self.lines.append((self.time_left(status, current), False))
-        return [watts]
+        return [watts] if self.power else [capacity / 100]
 
     def time_left(self, status, current):
         """h:mm until empty (discharging) or full (charging), from charge or energy."""

@@ -102,7 +102,7 @@ Super+Ctrl+T does). Only CPU and memory are on the bar by default.
 | `touchbar.gpu` | GPU load (amdgpu `gpu_busy_percent`) | `%` | `card` (first GPU that reports load, e.g. `"card1"`). `temperature`, `sensor` (the GPU's own hwmon). |
 | `touchbar.network` | download up, upload down | `↓1.2M` `↑40K` (bytes/s) | `interface` (the default route's). |
 | `touchbar.disk` | reads up, writes down | `R 1.2M` `W 40K` (bytes/s) | `device` (first disk in `/sys/block`, e.g. `"nvme0n1"`), `show` (`"io"`, or `"usage"` for how full `mount` is), `mount` (`"/"`). |
-| `touchbar.battery` | power draw in watts | `%`, then `detail` | Label is a battery icon for the level and charging state. `detail` (`"time"`: time to empty or full; `"power"`: watts; `"none"`), `low` (`15`: % at which it turns red while discharging), `maxPower` (auto), `battery` (`"BAT0"`). |
+| `touchbar.battery` | charge level | `%`, then `detail` | Label is a battery icon for the level and charging state. `graph` (`"charge"`, or `"power"` for power draw in watts). `detail` (`"time"`: time to empty or full; `"power"`: watts; `"none"`), `low` (`15`: % at which it turns red while discharging), `maxPower` (auto; the power graph's top), `battery` (`"BAT0"`). |
 | `touchbar.fan` | speed as a fraction of the fan's max | rpm | `fan` (`1`). Read from hwmon (applesmc on this Mac). |
 
 Network and disk graphs scale to the busiest recent sample, like btop, with a

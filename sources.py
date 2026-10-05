@@ -322,7 +322,7 @@ class Battery(Source):
         return chr(0xF007A + max(0, min(8, round(capacity / 10) - 1)))   # 10% .. 90%
 
     def widest(self):
-        return ["100%", "10:00"]
+        return ["100%", "10:00"] if self.spec.get("detail", "none") != "none" else ["100%"]
 
     def scale(self, series, history):
         if not self.power:
@@ -339,7 +339,7 @@ class Battery(Source):
             current, volts = int(self.read("power_now")) / 1e6, 1.0   # power_now is in µW
         watts = current * volts
         self.lines = [(f"{capacity}%", status == "Discharging" and capacity <= int(self.spec.get("low", 15)))]
-        detail = self.spec.get("detail", "time")
+        detail = self.spec.get("detail", "none")
         if detail == "power":
             self.lines.append((f"{watts:.1f}W", False))
         elif detail == "time":

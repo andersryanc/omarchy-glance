@@ -17,6 +17,7 @@ BLUE_RED = ["#4897d4", "#a77fd4", "#dc4c4c"]
 DOWNLOAD = ["#291f75", "#4f43a3", "#b0a9de"]
 UPLOAD = ["#620665", "#7d4180", "#dcafde"]
 TEMP = ["#4897d4", "#5474e8", "#ff40b6"]
+RED_GREEN = ["#dc4c4c", "#cbc06c", "#77ca9b"]
 
 
 def read_int(path):
@@ -45,6 +46,7 @@ def hwmon_by_name(name):
 
 class Source:
     label = ""                       # default text before the graph
+    meter = False                    # draw the latest value as a level meter, not a history
     gradients = [("cpu", GREEN_RED)]  # per series: btop theme gradient, fallback
     mirrored = False                 # two series: [0] grows up from the middle, [1] down
     percent = True                   # values are fractions; `alarm` applies
@@ -261,8 +263,9 @@ class Disk(Rates):
 
 
 class Battery(Source):
-    """Charge and state as text. The graph is the charge level, or with
-    "graph": "power" the power draw in watts."""
+    """Charge and state as text, and a level meter filled to the charge in one
+    colour from red (empty) to green (full). "graph": "charge" or "power"
+    shows a history of the charge or the power draw in watts instead."""
     percent = False
     path = None
 
@@ -271,7 +274,13 @@ class Battery(Source):
         return self.spec.get("graph") == "power"
 
     @property
+    def meter(self):
+        return self.spec.get("graph", "level") == "level"
+
+    @property
     def gradients(self):
+        if self.meter:
+            return [("battery", RED_GREEN)]      # btop has none; RED_GREEN unless configured
         return [("temp", TEMP)] if self.power else [("cpu", GREEN_RED)]
 
     def find_battery(self):

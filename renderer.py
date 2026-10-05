@@ -833,6 +833,29 @@ class Renderer:
                 cr.set_source_rgba(*self.color(lerp_rgb(stops, row / max(1, rows - 1))))
                 cr.fill()
 
+    def draw_meter(self, cr, w, x, level, stops):
+        """Level meter: filled left to right, all in the gradient's colour for the level."""
+        sp, columns = self.graph_spacing(w), self.graph_columns(w)
+        if level is None:
+            self.draw_dots(cr, w, x, [], columns, stops)
+            return
+        level = min(max(level, 0.0), 1.0)
+        rgb = lerp_rgb(stops, level)
+        if w.spec.get("style") == "bars":
+            rows = (self.short - 2 * KEY_PAD - 16) // sp + 1
+            h = (rows - 1) * sp + sp * 0.64
+            top = self.short / 2 - h / 2
+            self.rounded_rect(cr, x, top, columns * sp, h, 4)
+            cr.set_source_rgba(*self.color(self.config.text, 0.12))
+            cr.fill()
+            if level > 0:
+                self.rounded_rect(cr, x, top, max(8, columns * sp * level), h, 4)
+                cr.set_source_rgba(*self.color(rgb))
+                cr.fill()
+            return
+        lit = round(level * columns) or (1 if level > 0 else 0)
+        self.draw_dots(cr, w, x, [1.0] * lit + [0.0] * (columns - lit), columns, [rgb])
+
     def draw_graph(self, cr, w):
         """Key-style container: label, history graph, per-core meters, current value."""
         s, g, sp = w.spec, self.graphs[w.key], self.graph_spacing(w)
@@ -844,6 +867,9 @@ class Renderer:
             if part == "label":
                 self.draw_text_at(cr, source.label_text(), x, cy,
                                   float(s.get("fontSize", 18)), self.config.text)
+            elif part == "graph" and source.meter:
+                level = g["history"][0][-1] if g["history"][0] else None
+                self.draw_meter(cr, w, x, level, gradients[0])
             elif part == "graph":
                 for i, history in enumerate(g["history"]):
                     scale = source.scale(i, history) or 1.0

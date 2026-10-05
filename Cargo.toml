@@ -1,0 +1,10 @@
+[package]
+name = "touchbar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cairo-rs = { version = "0.22", features = ["png"] }
+chrono = "0.4.45"
+libc = "0.2.190"
+serde_json = "1.0.151"

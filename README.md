@@ -2,28 +2,59 @@
 
 A custom renderer for the MacBook Pro T1 Touch Bar, driven through
 [t1bridge](https://github.com/standardagents/t1bridge)'s Touch Bar hardware IPC
-(`t1bridge-interfaces.md`). By default it draws an Esc key, media keys,
+(`docs/t1bridge-interfaces.md`). By default it draws an Esc key, media keys,
 btop-style CPU and memory graphs and a Claude usage widget, and while Fn is
 held, brightness and volume keys and a mic-mute key with a live waveform. Everything on the bar
 comes from a JSON config.
 
+There are two implementations of the same renderer: the main one in Rust (at
+the repo root), and the original Python one in `python/`, kept as a fallback.
+Both read the same config and draw identical frames.
+
+## Building
+
+```
+cargo build --release
+```
+
+Rust comes from mise (`mise use -g rust@stable`). The Python renderer needs
+only `python-cairo`.
+
+To check a change without the hardware, draw one frame to a PNG (`fn` shows
+the Fn layer):
+
+```
+target/release/touchbar --preview /tmp/bar.png [fn]
+```
+
 ## Switching renderers
 
 ```
-touchbar-custom on            # use the custom renderer (Rust, ~/Work/touchbar-rust)
-touchbar-custom on python     # use this Python renderer instead
+touchbar-custom on            # use the Rust renderer (target/release/touchbar)
+touchbar-custom on python     # use python/renderer.py instead
 touchbar-custom off           # back to the t1bridge built-in bar
-touchbar-custom restart       # restart after editing renderer.py
+touchbar-custom restart       # restart after rebuilding or editing
 touchbar-custom status        # which renderer is selected and running
 touchbar-custom log           # follow the renderer's log
 touchbar-custom config        # create ~/.config/touchbar/config.json if missing, print its path
 touchbar-custom config edit   # ... and open it in $EDITOR
 ```
 
-`on` points `~/.config/t1bridge/renderer` at the Rust port's
-`target/release/touchbar` (`on python`: at `renderer.py`) and restarts the
-`t1-touchbar` user service. If the renderer exits, t1bridge falls back to its
-built-in bar.
+`on` points `~/.config/t1bridge/renderer` at the chosen renderer and restarts
+the `t1-touchbar` user service. If the renderer exits, t1bridge falls back to
+its built-in bar.
+
+## Repository layout
+
+| Path | |
+|---|---|
+| `src/` | Rust renderer: `main.rs` (entry, `--preview`), `proto.rs` (IPC, memfd buffers), `config.rs`, `renderer.rs` (widgets, layout, drawing, input, event loop), `sources.rs` (graph data), `mic.rs`, `proc.rs` (child processes). |
+| `python/` | Python renderer: `renderer.py`, `sources.py`, `mic.py`. |
+| `config.default.json` | The default config, shared: compiled into the Rust binary, read by Python. |
+| `touchbar-custom` | The switch script (linked from `~/.local/bin`). |
+| `docs/` | t1bridge's IPC spec and README, the nohzafk T1 notes, the T1's USB descriptors. |
+| `tools/` | Hardware experiments, e.g. `cutoff_test.py` (the 2060 px limit). |
+| `TODO.md` | Backlog. |
 
 ## Configuration
 

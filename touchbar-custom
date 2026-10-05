@@ -4,8 +4,8 @@
 set -euo pipefail
 
 link="${XDG_CONFIG_HOME:-$HOME/.config}/t1bridge/renderer"
-custom="$HOME/Work/touchbar-rust/target/release/touchbar"
-python="$HOME/Work/touchbar/renderer.py"
+custom="$HOME/Work/touchbar/target/release/touchbar"
+python="$HOME/Work/touchbar/python/renderer.py"
 config="${XDG_CONFIG_HOME:-$HOME/.config}/touchbar/config.json"
 default_config="$HOME/Work/touchbar/config.default.json"
 

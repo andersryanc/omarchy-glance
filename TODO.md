@@ -49,6 +49,3 @@ waiting for a yes or no.
       ever exposed.
 - [ ] Per-theme styling: take key and text colours from the Omarchy theme, as
       the graphs already do with btop's.
-
-### Upstream
-- [ ] Report the 2060 px visible-width limit to t1bridge.

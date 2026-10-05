@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Custom Touch Bar renderer for t1bridge (Touch Bar hardware IPC v1).
 
-The bar is built from ~/.config/touchbar/config.json (or config.default.json
-next to this script when there is none) and reloads when that file changes.
+The bar is built from ~/.config/touchbar/config.json (or ../config.default.json
+in the repo root when there is none) and reloads when that file changes.
 A config has two layers, "default" and "fn" (shown while Fn is held), each
 with left/center/right lists of widgets, like the Omarchy bar's shell.json.
 See README.md for the format.
 
-Spec: ~/Work/touchbar/t1bridge-interfaces.md
+Spec: ~/Work/touchbar/docs/t1bridge-interfaces.md
 """
 
 import array
@@ -31,7 +31,7 @@ from sources import SOURCES
 
 SOCK_PATH = "/run/t1bridge/touchbar.sock"
 HERE = os.path.dirname(os.path.realpath(__file__))
-DEFAULT_CONFIG = os.path.join(HERE, "config.default.json")
+DEFAULT_CONFIG = os.path.join(HERE, "..", "config.default.json")
 USER_CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
                            "touchbar", "config.json")
 POLL_SECONDS = 1                 # how often to check the config and usage files

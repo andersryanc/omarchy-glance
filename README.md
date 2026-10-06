@@ -102,7 +102,7 @@ widgets set a `type` and can use any id.
 | Widget | Options |
 |---|---|
 | `touchbar.esc` | `width` (140). Sends Esc. |
-| `touchbar.agents` | `agent` (`"claude"`; any record in `~/.local/state/omarchy/agents/usage/`), `layout` (`"row"`: meters side by side with their names above; `"stacked"`: meters on top of each other with short labels on the left), `meterWidth` (320, or 200 stacked), `shortLabels` (stacked labels, default `{"Session": "5h", "Weekly": "7d"}`), `resets` (when each limit resets: `"time"` shows the clock time, with the weekday when it's more than a day away; `"countdown"` shows time left, e.g. `4h 12m`; `"none"`), `timeFormat` / `dayTimeFormat` (strftime, `"%H:%M"` / `"%a %H:%M"`), `onTap` (toggles the Omarchy agents panel; `""` for nothing). |
+| `touchbar.agents` | `agent` (`"claude"`; any record in `~/.local/state/omarchy/agents/usage/`), `layout` (`"row"`: meters side by side with their names above; `"stacked"`: meters on top of each other with short labels on the left), `meterWidth` (200, or 120 stacked), `shortLabels` (stacked labels, default `{"Session": "5h", "Weekly": "7d"}`), `resets` (when each limit resets: `"time"` shows the clock time, with the weekday when it's more than a day away; `"countdown"` shows time left, e.g. `4h 12m`; `"none"`), `timeFormat` / `dayTimeFormat` (strftime, `"%H:%M"` / `"%a %H:%M"`), `onTap` (toggles the Omarchy agents panel; `""` for nothing). |
 | `touchbar.mic` | Mic mute toggle with a live waveform while an app records. See [Microphone](#microphone). |
 | `touchbar.media` | Previous, play/pause and next keys and the current track. See [Media](#media). |
 | `touchbar.cpu`, `.memory`, `.gpu`, `.network`, `.disk`, `.battery`, `.fan` | A label, a btop-style dot graph of recent history, and the current value. See [Graphs](#graphs). |
@@ -117,6 +117,24 @@ A command widget shows the first line of its script's output. Like Omarchy's
 command modules, it also accepts Waybar-style JSON:
 `{"text": "…", "class": "critical"}`. A class of `urgent` or `critical` turns
 the text red.
+
+Each provider can have its own `touchbar.agents` widget. Claude and Codex use
+copies of the Omarchy agents panel logos; other providers use the agents glyph.
+Configured provider widgets appear only when the shared Omarchy usage record
+contains limits, a valid balance, or positive all-time/today prompt or session
+counts or active days, matching the panel's local data check. Missing, invalid,
+or empty records hide the widget and reclaim its space within a second.
+`ready` alone does not make a widget visible. Records are read directly from
+`${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/`; the Touch Bar never
+collects or writes usage data. Omarchy's provider settings and cross-device
+history aggregation remain specific to the system panel.
+
+For example, place these together in a layer's `right` list:
+
+```json
+{ "id": "touchbar.agents", "agent": "claude", "layout": "stacked" },
+{ "id": "touchbar.agents", "agent": "codex", "layout": "stacked" }
+```
 
 ### Graphs
 

@@ -35,10 +35,29 @@ const KEY_PAD: i32 = 4; // inset of each key face inside its slot
 const DIM: f64 = 0.25; // brightness multiplier while idle
 const COMMAND_TIMEOUT: f64 = 10.0; // kill a command widget's script after this long
 const AGENTS_TOGGLE: &str = "omarchy-shell -q omarchy.agents toggle";
-const USAGE_DIR: &str = ".local/state/omarchy/agents/usage";
+fn usage_dir() -> PathBuf {
+    std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty())
+        .map_or_else(|| home().join(".local/state"), PathBuf::from)
+        .join("omarchy/agents/usage")
+}
+
+// Match the Omarchy panel's providerHasData, including its validated balance.
+fn provider_has_data(record: &Value) -> bool {
+    if !record.get("id").is_some_and(|id| id.as_str().is_some_and(|s| !s.is_empty())) {
+        return false;
+    }
+    let positive = ["totalPrompts", "totalSessions", "activeDays", "todayPrompts", "todaySessions"]
+        .iter().any(|key| record.get(key).and_then(|v| v.as_f64().or_else(|| v.as_str()?.parse().ok()))
+            .is_some_and(|n| n.is_finite() && n > 0.0));
+    let limits = record.get("limits").and_then(Value::as_array).is_some_and(|l| !l.is_empty());
+    let balance = record.get("balance").filter(|b| b.is_object()).and_then(|b| b.get("remaining"))
+        .and_then(|v| v.as_f64().or_else(|| v.as_str()?.parse().ok()))
+        .is_some_and(|n| n.is_finite() && n >= 0.0);
+    positive || limits || balance
+}
 const USAGE_ICON: &str = "\u{F16A3}"; // the Omarchy bar's agents glyph (Nerd Font)
 const METER_ALARM: f64 = 0.9; // turn red at this fraction used, like the bar panel
-const SHORT_LABELS: [(&str, &str); 2] = [("Session", "5h"), ("Weekly", "7d")]; // agents widget, stacked layout
+const SHORT_LABELS: [(&str, &str); 3] = [("Session", "5h"), ("5h window", "5h"), ("Weekly", "7d")]; // agents widget, stacked layout
 const STACKED_FONT: f64 = 14.0;
 const RESET_COLOR: Rgb = [160.0, 160.0, 160.0]; // agents widget: when each limit resets
 const ACTIVITY: &str = "omarchy-launch-or-focus-tui btop"; // what Super+Ctrl+T opens
@@ -250,6 +269,8 @@ pub struct Renderer {
     fn_held: bool,
     logged_contacts: HashSet<u8>,
     touch_marks: Vec<i32>, // logical x of current touches (test pattern)
+    provider_data: HashMap<String, bool>,
+    provider_icons: HashMap<String, ImageSurface>,
     usage: HashMap<String, (Option<SystemTime>, Vec<Limit>)>,
     commands: HashMap<String, CommandState>,
     graphs: HashMap<String, GraphState>,
@@ -292,6 +313,14 @@ impl Renderer {
             fn_held: false,
             logged_contacts: HashSet::new(),
             touch_marks: vec![],
+            provider_data: HashMap::new(),
+            provider_icons: [
+                ("claude", include_bytes!("../assets/agents/claude.png").as_slice()),
+                ("codex", include_bytes!("../assets/agents/codex.png").as_slice()),
+            ].into_iter().filter_map(|(name, bytes)| {
+                ImageSurface::create_from_png(&mut std::io::Cursor::new(bytes)).ok()
+                    .map(|surface| (name.to_string(), surface))
+            }).collect(),
             usage: HashMap::new(),
             commands: HashMap::new(),
             graphs: HashMap::new(),
@@ -466,6 +495,10 @@ impl Renderer {
                 x += width;
             }
         }
+        let hidden: HashSet<String> = self.widgets.iter().filter(|w| !self.widget_has_data(w)).map(|w| w.key.clone()).collect();
+        self.owner.retain(|_, key| !hidden.contains(key));
+        self.repeat_at.retain(|cid, _| self.owner.contains_key(cid));
+        self.touch_x.retain(|cid, _| self.owner.contains_key(cid));
         self.dirty = true;
     }
 
@@ -476,6 +509,7 @@ impl Renderer {
     }
 
     fn width_of(&self, w: &Widget) -> i32 {
+        if !self.widget_has_data(w) { return 0; }
         let s = &w.spec;
         match w.kind {
             Kind::Spacer => int(s, "size", 40) as i32,
@@ -498,6 +532,10 @@ impl Renderer {
             }
             _ => int(s, "width", KEY_WIDTH) as i32,
         }
+    }
+
+    fn widget_has_data(&self, w: &Widget) -> bool {
+        w.kind != Kind::Agents || self.provider_data.get(&text(&w.spec, "agent", "claude")).copied().unwrap_or(false)
     }
 
     fn widget(&self, key: &str) -> Option<&Widget> {
@@ -691,10 +729,14 @@ impl Renderer {
     // --- agent usage records -----------------------------------------------
     /// Read limits for every agents widget from its Omarchy usage record.
     fn poll_usage(&mut self) {
+        self.poll_usage_at(&usage_dir());
+    }
+
+    fn poll_usage_at(&mut self, directory: &std::path::Path) {
         let agents: HashSet<String> =
             self.widgets.iter().filter(|w| w.kind == Kind::Agents).map(|w| text(&w.spec, "agent", "claude")).collect();
         for agent in agents {
-            let path = home().join(USAGE_DIR).join(format!("{agent}.json"));
+            let path = directory.join(format!("{agent}.json"));
             let mt = mtime(&path);
             let old = self.usage.get(&agent);
             if old.is_some_and(|o| o.0 == mt) {
@@ -704,8 +746,10 @@ impl Renderer {
             let record = fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| {
                 serde_json::from_str::<Value>(&s).map_err(|e| e.to_string())
             });
+            let mut has_data = false;
             match record {
                 Ok(record) => {
+                    has_data = provider_has_data(&record);
                     for entry in record.get("limits").and_then(Value::as_array).into_iter().flatten() {
                         let Some(entry) = entry.as_object() else { continue };
                         let frac = num(entry, "percent", -1.0);
@@ -723,7 +767,9 @@ impl Renderer {
                 Err(e) if mt.is_some() => log(&format!("unreadable usage record {}: {e}", path.display())),
                 Err(_) => {}
             }
-            let changed = old.is_none_or(|o| o.1 != limits);
+            let changed = old.is_none_or(|o| o.1 != limits)
+                || self.provider_data.get(&agent).copied() != Some(has_data);
+            self.provider_data.insert(agent.clone(), has_data);
             self.usage.insert(agent, (mt, limits));
             if changed {
                 self.relayout();
@@ -1128,6 +1174,20 @@ impl Renderer {
         self.draw_label(cr, &state.text, w, num(&w.spec, "fontSize", 18.0), c);
     }
 
+    /// Provider marks from the Omarchy agents panel, with a glyph fallback.
+    fn draw_provider_icon(&self, cr: &Context, w: &Widget, cx: f64, cy: f64) {
+        if let Some(icon) = self.provider_icons.get(&text(&w.spec, "agent", "claude")) {
+            let _ = cr.save();
+            cr.translate(cx - 15.0, cy - 15.0);
+            cr.scale(30.0 / f64::from(icon.width()), 30.0 / f64::from(icon.height()));
+            let _ = cr.set_source_surface(icon, 0.0, 0.0);
+            let _ = cr.paint();
+            let _ = cr.restore();
+        } else {
+            self.draw_text(cr, USAGE_ICON, cx, cy, 30.0, self.config.text);
+        }
+    }
+
     /// Agents icon, then one row per limit: short label, meter, percent.
     fn draw_agents_stacked(&self, cr: &Context, w: &Widget) {
         let (white, urgent) = (self.config.text, self.config.urgent);
@@ -1136,7 +1196,7 @@ impl Renderer {
         let (label_w, pct_w) = (f64::from(label_w), f64::from(pct_w));
         let x0 = f64::from(w.rect[0] + KEY_PAD);
         let mid = f64::from(self.short) / 2.0;
-        self.draw_text(cr, USAGE_ICON, x0 + 14.0 + 15.0, mid, 30.0, white);
+        self.draw_provider_icon(cr, w, x0 + 14.0 + 15.0, mid);
         let limits = self.limits_for(w);
         let x = x0 + 14.0 + 30.0 + 14.0;
         for (i, l) in limits.iter().enumerate() {
@@ -1171,7 +1231,7 @@ impl Renderer {
         let (gap, icon_w, meter_w) = (24.0, 30.0, f64::from(meter_width(&w.spec)));
         let (white, urgent) = (self.config.text, self.config.urgent);
         let x0 = f64::from(w.rect[0] + KEY_PAD);
-        self.draw_text(cr, USAGE_ICON, x0 + 14.0 + icon_w / 2.0, f64::from(self.short) / 2.0, 30.0, white);
+        self.draw_provider_icon(cr, w, x0 + 14.0 + icon_w / 2.0, f64::from(self.short) / 2.0);
         cr.set_font_size(15.0);
         let mut x = x0 + 14.0 + icon_w + 14.0;
         for l in self.limits_for(w) {
@@ -1409,7 +1469,7 @@ impl Renderer {
         cr.select_font_face(&self.config.font, FontSlant::Normal, FontWeight::Normal);
         let layer = self.visible_layer();
         let widgets: Vec<&Widget> =
-            self.widgets.iter().filter(|w| w.layer == layer && only.is_none_or(|o| o.contains(&w.key))).collect();
+            self.widgets.iter().filter(|w| w.layer == layer && self.widget_has_data(w) && only.is_none_or(|o| o.contains(&w.key))).collect();
         let bg = self.background();
         match only {
             None => self.fill(&cr, 0, 0, self.long, self.short, bg),
@@ -1531,7 +1591,7 @@ impl Renderer {
                 continue;
             }
             let layer = self.visible_layer();
-            let hit = self.widgets.iter().find(|w| w.layer == layer && w.kind != Kind::Spacer && w.hit(lx, ly));
+            let hit = self.widgets.iter().find(|w| w.layer == layer && self.widget_has_data(w) && w.kind != Kind::Spacer && w.hit(lx, ly));
             if let Some(w) = hit {
                 let (key, repeats) = (w.key.clone(), w.repeats);
                 self.owner.insert(cid, key.clone());
@@ -1747,7 +1807,7 @@ fn graph_columns(s: &Spec) -> usize {
 
 fn meter_width(s: &Spec) -> i32 {
     let stacked = text(s, "layout", "") == "stacked";
-    int(s, "meterWidth", if stacked { 200 } else { 320 }) as i32
+    int(s, "meterWidth", if stacked { 120 } else { 200 }) as i32
 }
 
 /// Which part of a media widget x falls in: previous, playPause, next, title.
@@ -1800,5 +1860,64 @@ fn reset_widest(w: &Widget) -> String {
             let time = strftime(&sample, &text(&w.spec, "timeFormat", "%H:%M"));
             if time.chars().count() > day.chars().count() { time } else { day }
         }
+    }
+}
+
+#[cfg(test)]
+mod agent_visibility_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn matches_panel_data_rules() {
+        assert!(!provider_has_data(&json!({"id":"codex", "ready":true})));
+        assert!(!provider_has_data(&json!({"id":"codex", "recentDays":[{}], "totalPrompts":0})));
+        for key in ["totalPrompts", "totalSessions", "activeDays", "todayPrompts", "todaySessions"] {
+            let mut record = json!({"id":"codex", "ready":false});
+            record[key] = json!(1);
+            assert!(provider_has_data(&record), "{key}");
+        }
+        assert!(provider_has_data(&json!({"id":"codex", "limits":[{"percent":0}]})));
+        assert!(provider_has_data(&json!({"id":"codex", "balance":{"remaining":0}})));
+        assert!(!provider_has_data(&json!({"id":"codex", "balance":{"remaining":-1}})));
+        assert!(!provider_has_data(&json!({"limits":[{}]})));
+    }
+
+    #[test]
+    fn records_appear_disappear_and_reclaim_space() {
+        let directory = std::env::temp_dir().join(format!("touchbar-visibility-{}", std::process::id()));
+        fs::create_dir_all(&directory).unwrap();
+        let path = directory.join("codex.json");
+        let mut renderer = Renderer::new(None);
+        renderer.config = Rc::new(Config::parse(r#"{"version":1,"layers":{"default":{"right":[
+            {"id":"touchbar.agents","agent":"codex","layout":"stacked"},
+            {"id":"touchbar.esc"}
+        ]}}}"#).unwrap());
+        renderer.set_geometry(2170, 60);
+        renderer.build();
+        renderer.poll_usage_at(&directory);
+        assert_eq!(renderer.width_of(&renderer.widgets[0]), 0);
+        let esc_rect = renderer.widgets[1].rect;
+        for record in [json!({"id":"codex","limits":[{"label":"5h window","percent":0}]}),
+                       json!({"id":"codex","totalSessions":1})] {
+            fs::write(&path, record.to_string()).unwrap();
+            renderer.poll_usage_at(&directory);
+            assert!(renderer.width_of(&renderer.widgets[0]) > 0);
+            assert_eq!(renderer.widgets[1].rect, esc_rect);
+            renderer.owner.insert(1, renderer.widgets[0].key.clone());
+            fs::remove_file(&path).unwrap();
+            renderer.poll_usage_at(&directory);
+            assert_eq!(renderer.width_of(&renderer.widgets[0]), 0);
+            assert!(renderer.owner.is_empty());
+        }
+        fs::write(&path, "broken JSON").unwrap();
+        renderer.poll_usage_at(&directory);
+        assert_eq!(renderer.width_of(&renderer.widgets[0]), 0);
+        fs::remove_file(&path).unwrap();
+        renderer.poll_usage_at(&directory);
+        fs::write(&path, r#"{"id":"codex","ready":true,"limits":[]}"#).unwrap();
+        renderer.poll_usage_at(&directory);
+        assert_eq!(renderer.width_of(&renderer.widgets[0]), 0);
+        fs::remove_dir_all(directory).unwrap();
     }
 }

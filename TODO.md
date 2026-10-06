@@ -5,6 +5,12 @@ waiting for a yes or no.
 
 ## Done
 
+- [x] Hide configured agent widgets without shared Omarchy usage data; show
+      them again when data returns (2026-10-06).
+
+- [x] Separate Claude and Codex usage widgets with the provider logos from the
+      Omarchy agents panel; local testing layout replaces CPU/memory (2026-10-06).
+
 - [x] Monitoring graphs, supported but not on the bar by default:
       `touchbar.gpu`, `.network`, `.disk`, `.battery`, `.fan` (2026-10-04)
 - [x] Media controls on the Fn layer: `touchbar.media` (2026-10-04)

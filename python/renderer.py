@@ -72,10 +72,10 @@ DIM = 0.25                       # brightness multiplier while idle
 COMMAND_TIMEOUT = 10             # kill a command widget's script after this long
 OMARCHY_BIN = "/usr/share/omarchy/bin"
 AGENTS_TOGGLE = "omarchy-shell -q omarchy.agents toggle"
-USAGE_DIR = os.path.expanduser("~/.local/state/omarchy/agents/usage")
+USAGE_DIR = os.path.join(os.environ.get("XDG_STATE_HOME") or os.path.expanduser("~/.local/state"), "omarchy/agents/usage")
 USAGE_ICON = "\U000F16A3"        # the Omarchy bar's agents glyph (Nerd Font)
 METER_ALARM = 0.9                # turn red at this fraction used, like the bar panel
-SHORT_LABELS = {"Session": "5h", "Weekly": "7d"}   # agents widget, stacked layout
+SHORT_LABELS = {"Session": "5h", "5h window": "5h", "Weekly": "7d"}   # agents widget, stacked layout
 STACKED_FONT = 14
 RESET_COLOR = (0xA0, 0xA0, 0xA0)  # agents widget: when each limit resets
 ACTIVITY = "omarchy-launch-or-focus-tui btop"   # what Super+Ctrl+T opens
@@ -220,6 +220,7 @@ class Renderer:
         self.fn = False              # Fn key held
         self.logged_contacts = set()
         self.touch_marks = []        # logical x of current touches (test pattern)
+        self.provider_data = {}
         self.usage = {}              # agent -> (mtime, [(label, fraction used)])
         self.commands = {}           # widget key -> command widget state
         self.graphs = {}             # widget key -> graph widget state
@@ -351,7 +352,9 @@ class Renderer:
             for section in sections:
                 prefix = f"{layer}.{section}."
                 self.place([w for w in self.widgets if w.key.startswith(prefix)], section)
-        self.owner = {cid: by_key[w.key] for cid, w in self.owner.items()}
+        self.owner = {cid: by_key[w.key] for cid, w in self.owner.items() if self.widget_has_data(by_key[w.key])}
+        self.repeat_at = {cid: t for cid, t in self.repeat_at.items() if cid in self.owner}
+        self.touch_x = {cid: x for cid, x in self.touch_x.items() if cid in self.owner}
         self.dirty = True
 
     @staticmethod
@@ -373,6 +376,8 @@ class Renderer:
             x += width
 
     def width_of(self, w):
+        if not self.widget_has_data(w):
+            return 0
         s = w.spec
         if w.kind == "spacer":
             return int(s.get("size", 40))
@@ -431,9 +436,12 @@ class Renderer:
         """The Fn layer stays up while a finger is still on one of its widgets."""
         return self.config.has_fn and (self.fn or any(w.layer == "fn" for w in self.owner.values()))
 
+    def widget_has_data(self, w):
+        return w.kind != "agents" or self.provider_data.get(str(w.spec.get("agent", "claude")), False)
+
     def visible_widgets(self):
         layer = "fn" if self.fn_layer() else "default"
-        return [w for w in self.widgets if w.layer == layer]
+        return [w for w in self.widgets if w.layer == layer and self.widget_has_data(w)]
 
     def pressed(self, widget):
         return widget in self.owner.values()
@@ -577,6 +585,22 @@ class Renderer:
             self.redraw(w)
 
     # --- agent usage records -----------------------------------------------
+    @staticmethod
+    def provider_has_data(record):
+        if not isinstance(record, dict) or not record.get("id"):
+            return False
+        def number(value):
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                return float("nan")
+        positive = any(number(record.get(key)) > 0 for key in
+                       ("totalPrompts", "totalSessions", "activeDays", "todayPrompts", "todaySessions"))
+        limits = record.get("limits")
+        balance = record.get("balance")
+        remaining = number(balance.get("remaining")) if isinstance(balance, dict) else float("nan")
+        return positive or (isinstance(limits, list) and bool(limits)) or (0 <= remaining < float("inf"))
+
     def poll_usage(self):
         """Read limits for every agents widget from its Omarchy usage record."""
         for agent in {str(w.spec.get("agent", "claude")) for w in self.widgets if w.kind == "agents"}:
@@ -589,9 +613,11 @@ class Renderer:
             if old and old[0] == mtime:
                 continue
             limits = []
+            has_data = False
             try:
                 with open(path) as f:
                     record = json.load(f)
+                has_data = self.provider_has_data(record)
                 for entry in record.get("limits") or []:
                     frac = float(entry.get("percent", -1))
                     if frac >= 0:
@@ -604,8 +630,10 @@ class Renderer:
             except (OSError, ValueError, TypeError, AttributeError) as e:
                 if mtime is not None:
                     log(f"unreadable usage record {path}: {e}")
+            changed = not old or old[1] != limits or self.provider_data.get(agent) != has_data
+            self.provider_data[agent] = has_data
             self.usage[agent] = (mtime, limits)
-            if not old or old[1] != limits:
+            if changed:
                 self.relayout()
 
     def limits_for(self, w):
@@ -614,7 +642,7 @@ class Renderer:
 
     @staticmethod
     def meter_width(w):
-        return int(w.spec.get("meterWidth", 200 if w.spec.get("layout") == "stacked" else 320))
+        return int(w.spec.get("meterWidth", 120 if w.spec.get("layout") == "stacked" else 200))
 
     def short_label(self, w, label):
         """Stacked layout labels: "Session" -> "5h", "Weekly" -> "7d", or `shortLabels`."""
@@ -1118,13 +1146,34 @@ class Renderer:
         self.draw_label(cr, state["text"], w, float(w.spec.get("fontSize", 18)),
                         self.config.urgent if state["urgent"] else self.config.text)
 
+    def draw_provider_icon(self, cr, w, cx, cy):
+        icons = getattr(self, "provider_icons", None)
+        if icons is None:
+            self.provider_icons = icons = {}
+            for provider in ("claude", "codex"):
+                try:
+                    icons[provider] = cairo.ImageSurface.create_from_png(
+                        os.path.join(HERE, "..", "assets", "agents", provider + ".png"))
+                except (OSError, cairo.Error):
+                    pass
+        icon = icons.get(w.spec.get("agent", "claude"))
+        if icon is None:
+            self.draw_text(cr, USAGE_ICON, cx, cy, 30)
+            return
+        cr.save()
+        cr.translate(cx - 15, cy - 15)
+        cr.scale(30 / icon.get_width(), 30 / icon.get_height())
+        cr.set_source_surface(icon, 0, 0)
+        cr.paint()
+        cr.restore()
+
     def draw_agents_stacked(self, cr, w):
         """Agents icon, then one row per limit: short label, meter, percent."""
         white, urgent = self.config.text, self.config.urgent
         meter_w = self.meter_width(w)
         label_w, pct_w, reset_w = self.stacked_columns(w)
         x0 = w.rect[0] + KEY_PAD
-        self.draw_text(cr, USAGE_ICON, x0 + 14 + 15, self.short / 2, 30)
+        self.draw_provider_icon(cr, w, x0 + 14 + 15, self.short / 2)
         limits = self.limits_for(w)
         x = x0 + 14 + 30 + 14
         for i, (label, frac, resets) in enumerate(limits):
@@ -1156,7 +1205,7 @@ class Renderer:
         white, urgent = self.config.text, self.config.urgent
         self.draw_key_face(cr, w)
         x0 = w.rect[0] + KEY_PAD
-        self.draw_text(cr, USAGE_ICON, x0 + 14 + icon_w / 2, self.short / 2, 30)
+        self.draw_provider_icon(cr, w, x0 + 14 + icon_w / 2, self.short / 2)
 
         cr.set_font_size(15)
         x = x0 + 14 + icon_w + 14

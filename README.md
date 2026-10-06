@@ -46,6 +46,11 @@ its built-in bar.
 
 ## Repository layout
 
+The planned desktop panel and native second-row architecture is documented in
+[ADR 0001](docs/adr/0001-multiple-output-architecture.md), with
+[implementation tasks](docs/multi-output-tasks.md). These outputs are not yet
+implemented.
+
 | Path | |
 |---|---|
 | `src/` | Rust renderer: `main.rs` (entry, `--preview`), `proto.rs` (IPC, memfd buffers), `config.rs`, `renderer.rs` (widgets, layout, drawing, input, event loop), `sources.rs` (graph data), `mic.rs`, `proc.rs` (child processes). |

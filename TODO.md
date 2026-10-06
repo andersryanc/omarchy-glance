@@ -20,6 +20,14 @@ waiting for a yes or no.
 
 ## Proposed
 
+### Architecture and desktop outputs
+
+- [ ] Implement the shared-core and standalone-panel migration described in
+      [ADR 0001](docs/adr/0001-multiple-output-architecture.md), following the
+      [staged tasks and acceptance criteria](docs/multi-output-tasks.md).
+- [ ] Explore a supported native Omarchy second-row extension (tasks T12–T13);
+      reuse the desktop controls rather than fork the system bar.
+
 ### Controls
 - [ ] Brightness and volume **sliders**: drag along the bar to set the level
       directly instead of tapping −/+.

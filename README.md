@@ -130,8 +130,13 @@ contains limits, a valid balance, or positive all-time/today prompt or session
 counts or active days, matching the panel's local data check. Missing, invalid,
 or empty records hide the widget and reclaim its space within a second.
 `ready` alone does not make a widget visible. Records are read directly from
-`${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/`; the Touch Bar never
-collects or writes usage data. Omarchy's provider settings and cross-device
+`${XDG_STATE_HOME:-~/.local/state}/omarchy/agents/usage/`; the Touch Bar starts Omarchy’s `omarchy-agent-usage-update` collector for each
+configured provider at startup and every 60 seconds, without opening the panel.
+Refreshes run independently in the background, including for hidden widgets,
+and overlapping runs for the same provider are skipped. The collector writes
+the shared records using the existing CLI credentials and its normal cache
+policy. After renewing a CLI login, the next refresh picks up the credentials;
+the Touch Bar cannot renew an expired login itself. Omarchy's provider settings and cross-device
 history aggregation remain specific to the system panel.
 
 For example, place these together in a layer's `right` list:

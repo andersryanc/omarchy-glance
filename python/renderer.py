@@ -222,6 +222,7 @@ class Renderer:
         self.touch_marks = []        # logical x of current touches (test pattern)
         self.provider_data = {}
         self.usage = {}              # agent -> (mtime, [(label, fraction used)])
+        self.usage_refresh = {}      # agent -> (next refresh, background process)
         self.commands = {}           # widget key -> command widget state
         self.graphs = {}             # widget key -> graph widget state
         self.theme = {}              # btop theme colours (default graph gradients)
@@ -600,6 +601,34 @@ class Renderer:
         balance = record.get("balance")
         remaining = number(balance.get("remaining")) if isinstance(balance, dict) else float("nan")
         return positive or (isinstance(limits, list) and bool(limits)) or (0 <= remaining < float("inf"))
+
+    def refresh_usage(self, now):
+        """Refresh every configured provider independently, including hidden widgets."""
+        agents = {str(w.spec.get("agent", "claude")) for w in self.widgets if w.kind == "agents"}
+        for agent in agents:
+            if not agent or agent.startswith("-") or not all(
+                    c.isascii() and (c.isalnum() or c in "_-") for c in agent):
+                continue
+            next_refresh, job = self.usage_refresh.get(agent, (0.0, None))
+            if job is not None:
+                status = job.poll()
+                if status is None:
+                    continue
+                if status:
+                    log(f"usage refresh for {agent} exited with {status}")
+                job = None
+            if now < next_refresh:
+                self.usage_refresh[agent] = (next_refresh, job)
+                continue
+            try:
+                job = subprocess.Popen(
+                    ["timeout", "--kill-after=5s", "120s", "omarchy-agent-usage-update", agent],
+                    env=self.command_env(),
+                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                    stderr=subprocess.DEVNULL, start_new_session=True)
+            except OSError as e:
+                log(f"could not refresh usage for {agent}: {e}")
+            self.usage_refresh[agent] = (now + 60.0, job)
 
     def poll_usage(self):
         """Read limits for every agents widget from its Omarchy usage record."""
@@ -1359,6 +1388,7 @@ class Renderer:
             now = time.monotonic()
             if now >= next_poll:
                 self.poll_config()
+                self.refresh_usage(now)
                 self.poll_usage()
                 self.poll_theme()
                 minute = int(time.time() // 60)

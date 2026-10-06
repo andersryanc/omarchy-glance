@@ -17,7 +17,7 @@ use serde_json::Value;
 
 use crate::config::{Config, Layer, Rgb, Spec, hex_rgb, int, lerp_rgb, num, rgb, text, truthy};
 use crate::mic::{Mic, MicFd};
-use crate::proc::{kill, reap, shell};
+use crate::proc::{kill, popen, reap, shell};
 use crate::proto::{self, Buffer, Conn, Packer, le_u32, le_u64};
 use crate::sources::{self, Source};
 use crate::{log, now};
@@ -272,6 +272,7 @@ pub struct Renderer {
     provider_data: HashMap<String, bool>,
     provider_icons: HashMap<String, ImageSurface>,
     usage: HashMap<String, (Option<SystemTime>, Vec<Limit>)>,
+    usage_refresh: HashMap<String, (f64, Option<Child>)>,
     commands: HashMap<String, CommandState>,
     graphs: HashMap<String, GraphState>,
     theme: HashMap<String, String>, // btop theme colours (default graph gradients)
@@ -322,6 +323,7 @@ impl Renderer {
                     .map(|surface| (name.to_string(), surface))
             }).collect(),
             usage: HashMap::new(),
+            usage_refresh: HashMap::new(),
             commands: HashMap::new(),
             graphs: HashMap::new(),
             theme: HashMap::new(),
@@ -730,6 +732,38 @@ impl Renderer {
     /// Read limits for every agents widget from its Omarchy usage record.
     fn poll_usage(&mut self) {
         self.poll_usage_at(&usage_dir());
+    }
+
+    // Refresh configured providers even when their records are missing or their
+    // widgets are hidden. Each provider has its own nonblocking job and cadence.
+    fn refresh_usage(&mut self, t: f64) {
+        let agents: HashSet<String> = self.widgets.iter()
+            .filter(|w| w.kind == Kind::Agents)
+            .map(|w| text(&w.spec, "agent", "claude")).collect();
+        for agent in agents {
+            // The updater interprets leading dashes as options.
+            if agent.is_empty() || !agent.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+                || agent.starts_with('-') {
+                continue;
+            }
+            let (next, job) = self.usage_refresh.entry(agent.clone()).or_insert((0.0, None));
+            if let Some(child) = job.as_mut() {
+                match child.try_wait() {
+                    Ok(None) => continue,
+                    Ok(Some(status)) => {
+                        if !status.success() { log(&format!("usage refresh for {agent} exited with {status}")); }
+                    }
+                    Err(e) => log(&format!("usage refresh for {agent}: {e}")),
+                }
+                *job = None;
+            }
+            if t < *next { continue; }
+            *next = t + 60.0;
+            match popen(&["timeout", "--kill-after=5s", "120s", "omarchy-agent-usage-update", &agent], false) {
+                Ok(child) => *job = Some(child),
+                Err(e) => log(&format!("could not refresh usage for {agent}: {e}")),
+            }
+        }
     }
 
     fn poll_usage_at(&mut self, directory: &std::path::Path) {
@@ -1660,6 +1694,7 @@ impl Renderer {
             let t = now();
             if t >= next_poll {
                 self.poll_config();
+                self.refresh_usage(t);
                 self.poll_usage();
                 self.poll_theme();
                 let minute = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() / 60);

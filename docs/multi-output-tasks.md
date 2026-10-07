@@ -92,10 +92,7 @@ cannot request commands that are not configured. Dependencies: T01.
 - [x] Add the `backend` mode and systemd user units
   (`omarchy-glance.service` and `omarchy-glance.socket`).
 
-Done in `src/backend/` (core, providers, server, tests) and `systemd/`. The
-renderer keeps drawing from its own in-process providers until T04 switches it
-to the protocol; it already shares the graph sources, mic, config parser and
-provider helpers with the backend, and T04 deletes its remaining copies.
+Done in `src/backend/` (core, providers, server, tests) and `systemd/`.
 
 Acceptance: a test client receives a snapshot and updates; the last client
 disconnecting stops capture and polling; protocol tests cover malformed
@@ -103,15 +100,30 @@ requests, slow clients, and reconnection. Dependencies: T02.
 
 ### T04 — Turn the renderer into the Touch Bar client
 
-- [ ] Draw from backend snapshots instead of in-process state; keep layout,
+- [x] Draw from backend snapshots instead of in-process state; keep layout,
   Cairo drawing, press feedback, Fn layer and contact latch, idle dimming, and
   `TapKeys` in the client.
-- [ ] Translate touches into press/release requests for `exec` actions; Esc and
+- [x] Translate touches into press/release requests for `exec` actions; Esc and
   F-key buttons tap keys locally.
-- [ ] Reconnect to the backend and to the t1bridge socket instead of exiting;
+- [x] Reconnect to the backend and to the t1bridge socket instead of exiting;
   show a clear disconnected state while the backend is unavailable.
-- [ ] Add the `touchbar` mode and the installed t1bridge renderer wrapper that
+- [x] Add the `touchbar` mode and the installed t1bridge renderer wrapper that
   runs it; `preview` runs the backend and client in one process.
+
+Done in `src/renderer.rs`: it draws from snapshots and updates (graph labels,
+widths and gradients still come from a spec-only `Source`; the battery glyph
+from the `battery` state), sends `press`/`release` with the contact id as the
+pointer and `view` when the shown layer changes, and repeats held F-keys
+itself, so `settings` gained `repeatDelay` and `repeatInterval`. Contacts that
+are down when the config reloads or the backend reconnects are ignored until
+they lift instead of pressing again. The golden tests now run the protocol
+against an in-process backend that serves the fixture data
+(`Backend::inject`); all four images match the T00 ones unchanged.
+`omarchy-glance on` installs `~/.config/t1bridge/renderer` as a script running
+`omarchy-glance touchbar`, and `--preview` became `preview`. On 2026-10-07 the
+bar ran as a client and recovered from a backend restart and from the backend
+being stopped for 3 s without exiting; the hands-on check of every widget,
+touch, hold-to-repeat, Fn, reload and invalid config is the user's.
 
 Acceptance: golden previews match exactly; on hardware, every widget, touch,
 hold-to-repeat, Fn, config reload, and invalid-config fallback behaves as

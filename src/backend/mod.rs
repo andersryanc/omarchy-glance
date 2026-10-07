@@ -49,7 +49,7 @@ pub struct Paths {
 
 impl Paths {
     pub fn user() -> Paths {
-        let touchbar = crate::renderer::user_config();
+        let touchbar = crate::config::user_config();
         Paths { config_dir: touchbar.parent().unwrap().to_path_buf(), usage_dir: providers::usage_dir() }
     }
 }
@@ -496,6 +496,8 @@ impl Backend {
                        "debugBackgroundFn": hex(c.debug_bg_fn)},
             "font": c.font,
             "idleDimSeconds": c.idle_dim,
+            "repeatDelay": c.repeat_delay,
+            "repeatInterval": c.repeat_interval,
             "debug": {"background": c.debug_background, "border": c.border, "testPattern": c.test_pattern},
             "hasFn": c.has_fn,
         });
@@ -871,6 +873,72 @@ impl Backend {
             }
         }
         self.publish();
+    }
+
+    /// Run in this process for at most `max_wait` seconds: tick, then wait
+    /// for provider output (the in-process preview has no server loop).
+    pub fn pump(&mut self, max_wait: f64) {
+        let t = crate::now();
+        self.tick(t);
+        let fds = self.fds();
+        let mut pfds: Vec<libc::pollfd> =
+            fds.iter().map(|(fd, _)| libc::pollfd { fd: *fd, events: libc::POLLIN, revents: 0 }).collect();
+        let wait = (self.deadline().min(t + max_wait) - crate::now()).max(0.0);
+        let ms = (wait * 1000.0).ceil() as i32;
+        if unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, ms) } <= 0 {
+            return;
+        }
+        for (pfd, (_, token)) in pfds.iter().zip(fds) {
+            if pfd.revents != 0 {
+                self.readable(token, crate::now());
+            }
+        }
+    }
+
+    /// Whether a command or media script is still running.
+    pub fn busy(&self) -> bool {
+        self.providers.values().any(|p| match p {
+            Provider::Command(c) => c.job.running(),
+            Provider::Media(m) => m.status.running(),
+            _ => false,
+        })
+    }
+
+    /// Replace provider data with the fixed data of the golden previews
+    /// (tests/golden/fixture.json).
+    #[cfg(test)]
+    pub fn inject(&mut self, data: &Value) {
+        let floats = |v: &Value| -> Vec<f64> { v.as_array().map_or(vec![], |a| a.iter().map(|x| x.as_f64().unwrap()).collect()) };
+        let line = |l: &Value| (l[0].as_str().unwrap().to_string(), l[1].as_bool().unwrap());
+        for oc in self.outputs.values() {
+            for w in &oc.widgets {
+                let Some(p) = w.provider.as_ref().and_then(|k| self.providers.get_mut(k)) else { continue };
+                match p {
+                    Provider::Graph(g) => {
+                        let d = &data["graphs"][&w.id];
+                        let history = d["history"].as_array().unwrap().iter().map(floats).collect();
+                        let mut lines: Vec<(String, bool)> = d["lines"].as_array().unwrap().iter().map(line).collect();
+                        if truthy(w.spec.get("temperature")) || text(&w.spec, "detail", "none") != "none" {
+                            lines.push(line(&d["detail"]));
+                        }
+                        let battery = d.get("battery").map(|b| (b["charge"].as_i64().unwrap(), text(b.as_object().unwrap(), "status", "")));
+                        g.fixture(history, lines, floats(&d["cores"]), battery);
+                    }
+                    Provider::Command(c) => {
+                        let d = &data["commands"][&w.id];
+                        c.fixture(d["text"].as_str().unwrap(), d["urgent"].as_bool().unwrap_or(false));
+                    }
+                    Provider::Usage(u) => u.fixture(data["usage"].get(text(&w.spec, "agent", "claude")).cloned()),
+                    Provider::Media(m) => m.fixture(data["media"].clone()),
+                    Provider::Mic(m, _) => {
+                        let d = &data["mic"];
+                        m.muted = d["muted"].as_bool();
+                        m.in_use = d["inUse"].as_bool().unwrap();
+                        m.levels = floats(&d["levels"]).into();
+                    }
+                }
+            }
+        }
     }
 
     /// Stop every provider (on exit).

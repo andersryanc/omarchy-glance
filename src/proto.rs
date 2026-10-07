@@ -206,3 +206,10 @@ impl Buffer {
         self.surface.mark_dirty();
     }
 }
+
+impl Drop for Buffer {
+    fn drop(&mut self) {
+        self.surface.finish(); // cairo must be done with the memory before it goes
+        unsafe { libc::munmap(self.ptr as *mut libc::c_void, self.len) };
+    }
+}

@@ -2,8 +2,10 @@
 //!
 //! Each source reads the system once per sample. `sample()` returns one raw
 //! value per series (or None while it has nothing to show yet) and sets
-//! `lines`, the text shown after the graph as [(text, urgent)]. The renderer
-//! keeps the history and divides by `scale()` to get the 0-1 height it draws.
+//! `lines`, the text shown after the graph as [(text, urgent)]. The backend's
+//! graph provider keeps the history and sends `scale()` with it; clients divide
+//! by it to get the 0-1 height they draw, and use the spec-only methods
+//! (labels, widths, gradients) on a `Source` of their own.
 
 use std::collections::VecDeque;
 use std::fs;
@@ -103,7 +105,6 @@ pub struct Source {
     prev_counts: Option<(Instant, Vec<i64>)>, // network, disk
     temp_path: Option<String>,
     device: Option<String>, // gpu device dir, disk name, battery dir, fan input
-    pub fixed_icon: Option<String>, // battery label instead of reading the battery (golden tests)
     pub battery: Option<(i64, String)>, // charge % and status from the last battery sample
 }
 
@@ -118,7 +119,6 @@ impl Source {
             prev_counts: None,
             temp_path: None,
             device: None,
-            fixed_icon: None,
             battery: None,
         }
     }
@@ -404,18 +404,13 @@ impl Source {
         self.bat_int("capacity")
     }
 
+    /// The battery glyph for the last sample's charge and status.
     fn battery_icon(&self) -> String {
-        if let Some(icon) = &self.fixed_icon {
-            return icon.clone();
-        }
-        let mut me = Source::new(self.kind, &self.spec);
-        me.device = self.device.clone();
-        let state = me.battery_dir().and_then(|_| Ok((me.charge()?, me.bat("status")?)));
-        let code = match state {
-            Err(_) => 0xF0091,                         // battery unknown
-            Ok((_, s)) if s == "Charging" => 0xF0084,  // battery charging
-            Ok((c, _)) if c >= 95 => 0xF0079,          // battery full
-            Ok((c, _)) => 0xF007A + ((c as f64 / 10.0).round_ties_even() as i64 - 1).clamp(0, 8) as u32, // 10% .. 90%
+        let code = match &self.battery {
+            None => 0xF0091,                                  // battery unknown
+            Some((_, s)) if s == "Charging" => 0xF0084,       // battery charging
+            Some((c, _)) if *c >= 95 => 0xF0079,              // battery full
+            Some((c, _)) => 0xF007A + ((*c as f64 / 10.0).round_ties_even() as i64 - 1).clamp(0, 8) as u32, // 10% .. 90%
         };
         char::from_u32(code).map(String::from).unwrap_or_default()
     }

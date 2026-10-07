@@ -32,8 +32,8 @@
         { "id": "f1", "type": "button", "label": "F1", "key": "F1", "width": 80 },
         { "id": "up", "type": "button", "icon": "", "exec": "true", "repeat": true, "width": 80 },
         { "id": "glance.spacer", "size": 20 },
-        { "id": "uptime", "type": "command", "exec": "true" },
-        { "id": "alert", "type": "command", "exec": "true", "width": 130 }
+        { "id": "uptime", "type": "command", "exec": "uptime -p" },
+        { "id": "alert", "type": "command", "exec": "echo alert", "width": 130 }
       ],
       "center": [
         { "id": "glance.media", "buttonWidth": 60, "titleWidth": 180 },

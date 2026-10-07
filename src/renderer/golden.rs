@@ -1,5 +1,6 @@
-//! Golden previews: draw configs with the fixed provider data in
-//! tests/golden/fixture.json and a fixed clock, and compare every pixel with
+//! Golden previews: draw configs through the backend protocol with the fixed
+//! provider data in tests/golden/fixture.json (injected on the backend side)
+//! and a fixed clock, and compare every pixel with
 //! tests/golden/<name>.png. `UPDATE_GOLDEN=1 cargo test golden` rewrites the
 //! images; on a mismatch the actual frame is written to target/golden/.
 //!
@@ -15,58 +16,28 @@ fn fixture() -> Value {
     serde_json::from_str(&fs::read_to_string(&path).unwrap()).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
-/// A renderer for `config` with the fixture's data instead of the system's.
+static SCRATCH: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// A client drawing `config` from a backend in this process that serves the
+/// fixture's data instead of the system's.
 fn renderer(config: &str, fn_layer: bool) -> Renderer {
     let data = fixture();
-    let mut r = Renderer::new(None);
-    r.config = Rc::new(Config::parse(config).unwrap());
+    let n = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let dir = std::env::temp_dir().join(format!("omarchy-glance-golden-{}-{n}", std::process::id()));
+    fs::create_dir_all(dir.join("usage")).unwrap();
+    fs::write(dir.join("touchbar.json"), config).unwrap();
+    let mut backend = Box::new(Backend::new(Paths { config_dir: dir.clone(), usage_dir: dir.join("usage") }));
+    let session = backend.connect();
+    let mut r = Renderer::new(Some(Link::Local { backend, session }));
     r.set_geometry(2170, 60);
     r.fn_held = fn_layer;
     r.clock = Some(DateTime::parse_from_rfc3339(data["now"].as_str().unwrap()).unwrap());
-    r.build();
-
-    let keys: Vec<(String, Kind, String)> = r.widgets.iter().map(|w| (w.key.clone(), w.kind, w.id())).collect();
-    for (key, kind, id) in keys {
-        match kind {
-            Kind::Agents => {
-                let agent = text(&r.widget(&key).unwrap().spec, "agent", "claude");
-                let record = data["usage"].get(&agent).cloned();
-                r.set_usage(agent, None, record);
-            }
-            Kind::Graph => {
-                let g = r.graphs.get_mut(&key).unwrap();
-                let d = &data["graphs"][&id];
-                for (history, series) in g.history.iter_mut().zip(d["history"].as_array().unwrap()) {
-                    let values: Vec<f64> = series.as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
-                    history.extend(&values[values.len().saturating_sub(g.columns)..]);
-                }
-                let line = |l: &Value| (l[0].as_str().unwrap().to_string(), l[1].as_bool().unwrap());
-                g.source.lines = d["lines"].as_array().unwrap().iter().map(line).collect();
-                let spec = &r.widgets.iter().find(|w| w.key == key).unwrap().spec;
-                if truthy(spec.get("temperature")) || text(spec, "detail", "none") != "none" {
-                    g.source.lines.push(line(&d["detail"]));
-                }
-                g.source.cores = d["cores"].as_array().map_or(vec![], |c| c.iter().map(|v| v.as_f64().unwrap()).collect());
-                g.source.fixed_icon = d["icon"].as_str().map(String::from);
-            }
-            Kind::Media => r.commands.get_mut(&key).unwrap().media = Some(data["media"].clone()),
-            Kind::Command => {
-                let state = r.commands.get_mut(&key).unwrap();
-                state.text = data["commands"][&id]["text"].as_str().unwrap().to_string();
-                state.urgent = data["commands"][&id]["urgent"].as_bool().unwrap_or(false);
-            }
-            Kind::Mic if r.mic.is_none() => {
-                let d = &data["mic"];
-                let mut mic = Mic::new(20);
-                mic.muted = d["muted"].as_bool();
-                mic.in_use = d["inUse"].as_bool().unwrap();
-                mic.levels = d["levels"].as_array().unwrap().iter().map(|v| v.as_f64().unwrap()).collect();
-                r.mic = Some(mic);
-            }
-            _ => {}
-        }
-    }
-    r.relayout();
+    r.request(json!({"type": "hello", "protocol": 1, "output": "touchbar", "client": "golden"}));
+    let Some(Link::Local { backend, .. }) = r.link.as_mut() else { unreachable!() };
+    backend.inject(&data);
+    r.pull();
+    fs::remove_dir_all(&dir).unwrap();
+    assert!(r.synced, "no snapshot from the backend");
     r
 }
 
@@ -147,7 +118,7 @@ fn bench_frames() {
                            ("every-widget", fs::read_to_string(format!("{DIR}/every-widget.json")).unwrap())] {
         let r = renderer(&config, false);
         let graphs: HashSet<String> = r.widgets.iter()
-            .filter(|w| w.kind == Kind::Graph && w.layer == Layer::Default).map(|w| w.key.clone()).collect();
+            .filter(|w| w.kind == WidgetKind::Graph && w.layer == Layer::Default).map(|w| w.key.clone()).collect();
         let time = |only: Option<&HashSet<String>>| {
             let mut ms: Vec<f64> = (0..500).map(|_| {
                 let start = std::time::Instant::now();

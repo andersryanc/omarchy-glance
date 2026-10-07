@@ -1,12 +1,27 @@
 //! The JSON config (same format as the Python renderer; see README.md) and
 //! helpers for reading loosely typed widget options.
 
+use std::path::PathBuf;
+
 use serde_json::{Map, Value};
 
 pub type Spec = Map<String, Value>;
 pub type Rgb = [f64; 3]; // 0-255 per channel
 
 pub const SECTIONS: [&str; 3] = ["left", "center", "right"];
+pub const DEFAULT_CONFIG: &str = include_str!("../touchbar.default.json");
+
+pub fn home() -> PathBuf {
+    std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
+}
+
+/// The Touch Bar's user config; the backend reloads it when it changes.
+pub fn user_config() -> PathBuf {
+    std::env::var_os("XDG_CONFIG_HOME")
+        .filter(|v| !v.is_empty())
+        .map_or_else(|| home().join(".config"), PathBuf::from)
+        .join("omarchy-glance/touchbar.json")
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Layer {

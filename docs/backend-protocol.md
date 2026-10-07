@@ -5,7 +5,7 @@ and its output clients (the Touch Bar client first, a desktop client later)
 talk over this protocol; see [ADR 0001](adr/0001-multiple-output-architecture.md)
 for the architecture and [widget-inventory.md](widget-inventory.md) for the
 widgets it carries. The backend side is implemented in `src/backend/` (T03);
-the Touch Bar client follows in T04. Decisions marked **(approved)** settle open questions from
+the Touch Bar client is `src/renderer.rs` (T04). Decisions marked **(approved)** settle open questions from
 the inventory; the user approved them on 2026-10-06.
 
 ## Principles
@@ -130,7 +130,7 @@ backend replaces an overflowing update queue.
  "config":{"generation":3,"path":"~/.config/omarchy-glance/touchbar.json","error":null},
  "settings":{"colors":{"background":"#000000","key":"#303030","keyPressed":"#808080",
              "text":"#ffffff","urgent":"#e05a5a","debugBackground":"#106090","debugBackgroundFn":"#602090"},
-             "font":"JetBrainsMono Nerd Font","idleDimSeconds":0,
+             "font":"JetBrainsMono Nerd Font","idleDimSeconds":0,"repeatDelay":0.4,"repeatInterval":0.12,
              "debug":{"background":false,"border":false,"testPattern":false},"hasFn":true},
  "widgets":[
    {"key":"default.left.0","id":"glance.esc","kind":"esc","layer":"default","section":"left",
@@ -148,8 +148,9 @@ backend replaces an overflowing update queue.
   error when the user file is invalid; the backend then keeps serving the
   previous config (or the built-in default at startup), as today.
 - `settings`: output-level presentation settings from the config, so clients
-  never parse config files. `repeatDelay` and `repeatInterval` stay in the
-  backend, which applies them.
+  never parse config files. The backend applies `repeatDelay` and
+  `repeatInterval` to backend actions; they're in `settings` too for the keys
+  a Touch Bar client repeats itself.
 - `widgets`: in config order: layer, then section, then position.
 
 Widget fields:

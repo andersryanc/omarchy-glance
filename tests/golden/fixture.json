@@ -56,7 +56,7 @@
       "lines": [
         ["64%", false]
       ],
-      "icon": "󰁿",
+      "battery": {"charge": 64, "status": "Discharging"},
       "detail": ["3:12", false]
     },
     "glance.fan": {

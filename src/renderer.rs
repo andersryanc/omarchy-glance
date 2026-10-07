@@ -1,30 +1,34 @@
-//! The renderer: widgets, layout, drawing, input and the event loop.
+//! The Touch Bar client: draws the backend's widget state
+//! (docs/backend-protocol.md) on the bar through t1bridge and turns touches
+//! into backend requests. Layout, drawing, press feedback, the Fn layer and
+//! contact latch, idle dimming and key taps (Esc, F-keys) stay here.
 
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::fs;
-use std::io::Read;
+use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, RawFd};
-use std::path::PathBuf;
-use std::process::Child;
-use std::rc::Rc;
+use std::os::unix::net::UnixStream;
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use cairo::{Context, FontSlant, FontWeight, Format, ImageSurface, LinearGradient, Matrix, TextExtents};
 use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, TimeZone, Utc};
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::backend::providers::{COMMAND_TIMEOUT, MEDIA_STATUS, MEDIA_WATCH, provider_has_data, usage_dir};
-use crate::config::{Config, Layer, Rgb, Spec, hex_rgb, int, lerp_rgb, num, rgb, text, truthy};
-use crate::mic::{Mic, MicFd};
-use crate::proc::{kill, popen, reap, shell};
+use crate::backend::{Backend, Paths};
+use crate::config::{Config, DEFAULT_CONFIG, Layer, Rgb, SECTIONS, Spec, hex_rgb, home, int, lerp_rgb, num, rgb, text, truthy};
 use crate::proto::{self, Buffer, Conn, Packer, le_u32, le_u64};
+use crate::protocol::{self, MAX_LINE, WidgetKind, error};
 use crate::sources::{self, Source};
 use crate::{log, now};
 
-pub const DEFAULT_CONFIG: &str = include_str!("../touchbar.default.json");
-const POLL_SECONDS: f64 = 1.0; // how often to check the config and usage files
+const POLL_SECONDS: f64 = 1.0; // how often to check the btop theme and the minute
+const RETRY_MIN: f64 = 0.1; // reconnect delay after losing the backend or t1bridge, doubling ...
+const RETRY_MAX: f64 = 2.0; // ... up to this
+const OFFLINE_AFTER: f64 = 1.0; // show the disconnected state if no snapshot arrives this soon
+const CLIENT: &str = concat!("omarchy-glance ", env!("CARGO_PKG_VERSION"));
 
 // --- hardware facts and widget metrics ---------------------------------------
 // The panel reports 2170 px along the bar, but only the first 2060 light up
@@ -34,15 +38,11 @@ const VISIBLE_WIDTH: i32 = 2060;
 const KEY_WIDTH: i64 = 140; // default width of Esc and buttons
 const KEY_PAD: i32 = 4; // inset of each key face inside its slot
 const DIM: f64 = 0.25; // brightness multiplier while idle
-const AGENTS_TOGGLE: &str = "omarchy-shell -q omarchy.agents toggle";
 const USAGE_ICON: &str = "\u{F16A3}"; // the Omarchy bar's agents glyph (Nerd Font)
 const METER_ALARM: f64 = 0.9; // turn red at this fraction used, like the bar panel
 const SHORT_LABELS: [(&str, &str); 3] = [("Session", "5h"), ("5h window", "5h"), ("Weekly", "7d")]; // agents widget, stacked layout
 const STACKED_FONT: f64 = 14.0;
 const RESET_COLOR: Rgb = [160.0, 160.0, 160.0]; // agents widget: when each limit resets
-const ACTIVITY: &str = "omarchy-launch-or-focus-tui btop"; // what Super+Ctrl+T opens
-const MIC_TOGGLE: &str = "omarchy-audio-input-mute"; // what the mic-mute key runs (with OSD)
-// Players announce changes over MPRIS; re-read the status when they do.
 const ICON_MIC: &str = "\u{F036C}";
 const ICON_MIC_MUTED: &str = "\u{F036D}";
 const ICON_PREVIOUS: &str = "\u{F04AE}";
@@ -50,6 +50,7 @@ const ICON_PLAY: &str = "\u{F040A}";
 const ICON_PAUSE: &str = "\u{F03E4}";
 const ICON_NEXT: &str = "\u{F04AD}";
 const BTOP_THEME: &str = ".config/btop/themes/current.theme";
+const OFFLINE_TEXT: &str = "omarchy-glance: backend unavailable, reconnecting…";
 
 // 5x7 glyphs for the Esc label
 const GLYPHS: [(char, [&str; 7]); 3] = [
@@ -58,18 +59,7 @@ const GLYPHS: [(char, [&str; 7]); 3] = [
     ('c', ["     ", "     ", " ### ", "#    ", "#    ", "#   #", " ### "]),
 ];
 
-pub fn home() -> PathBuf {
-    std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
-}
-
-pub fn user_config() -> PathBuf {
-    std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|v| !v.is_empty())
-        .map_or_else(|| home().join(".config"), PathBuf::from)
-        .join("omarchy-glance/touchbar.json")
-}
-
-fn mtime(path: &PathBuf) -> Option<SystemTime> {
+fn mtime(path: &Path) -> Option<SystemTime> {
     fs::metadata(path).and_then(|m| m.modified()).ok()
 }
 
@@ -113,76 +103,45 @@ fn read_btop_theme() -> HashMap<String, String> {
     theme
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Kind {
-    Esc,
-    Button,
-    Command,
-    Agents,
-    Graph,
-    Mic,
-    Media,
-    Spacer,
+/// Presentation settings from a snapshot, over the built-in defaults.
+fn settings_config(settings: &Value) -> Config {
+    let mut c = Config::parse(DEFAULT_CONFIG).expect("built-in config");
+    c.layers.clear();
+    let empty = Spec::new();
+    let colors = settings.get("colors").and_then(Value::as_object).unwrap_or(&empty);
+    let color = |k: &str, fallback: Rgb| hex_rgb(colors.get(k), fallback);
+    (c.background, c.key, c.key_pressed) = (color("background", c.background), color("key", c.key), color("keyPressed", c.key_pressed));
+    (c.text, c.urgent) = (color("text", c.text), color("urgent", c.urgent));
+    (c.debug_bg, c.debug_bg_fn) = (color("debugBackground", c.debug_bg), color("debugBackgroundFn", c.debug_bg_fn));
+    let s = settings.as_object().unwrap_or(&empty);
+    c.font = text(s, "font", &c.font);
+    c.idle_dim = num(s, "idleDimSeconds", c.idle_dim);
+    c.repeat_delay = num(s, "repeatDelay", c.repeat_delay);
+    c.repeat_interval = num(s, "repeatInterval", c.repeat_interval);
+    c.has_fn = truthy(s.get("hasFn"));
+    let debug = s.get("debug").and_then(Value::as_object).unwrap_or(&empty);
+    (c.debug_background, c.border, c.test_pattern) =
+        (truthy(debug.get("background")), truthy(debug.get("border")), truthy(debug.get("testPattern")));
+    c
 }
 
-fn kind_of(spec: &Spec) -> Option<Kind> {
-    match spec.get("type").and_then(Value::as_str) {
-        Some("button") => return Some(Kind::Button),
-        Some("command") => return Some(Kind::Command),
-        _ => {}
+/// What touching a widget does.
+#[derive(Clone, PartialEq, Debug)]
+enum Action {
+    None,
+    Press,                                // a backend action (the backend repeats it)
+    Key { name: String, repeat: bool },  // a key t1bridge taps (repeated here)
+    Zones(Vec<String>),                  // media: a backend action per zone
+}
+
+fn parse_action(v: &Value) -> Action {
+    if let Some(name) = v.get("key").and_then(Value::as_str) {
+        return Action::Key { name: name.into(), repeat: truthy(v.get("repeat")) };
     }
-    let id = spec.get("id").and_then(Value::as_str).unwrap_or("");
-    if sources::kind_of(id).is_some() {
-        return Some(Kind::Graph);
+    if let Some(zones) = v.get("zones").and_then(Value::as_array) {
+        return Action::Zones(zones.iter().filter_map(Value::as_str).map(String::from).collect());
     }
-    Some(match id {
-        "glance.esc" => Kind::Esc,
-        "glance.agents" => Kind::Agents,
-        "glance.mic" => Kind::Mic,
-        "glance.media" => Kind::Media,
-        "glance.spacer" => Kind::Spacer,
-        _ => return None,
-    })
-}
-
-/// One placed widget.
-struct Widget {
-    key: String, // "<layer>.<section>.<index>"
-    layer: Layer,
-    section: &'static str,
-    kind: Kind,
-    spec: Spec,
-    rect: [i32; 4], // x0, y0, x1, y1
-    repeats: bool,
-}
-
-impl Widget {
-    fn hit(&self, x: i32, y: i32) -> bool {
-        let [x0, y0, x1, y1] = self.rect;
-        x0 <= x && x < x1 && y0 <= y && y < y1
-    }
-    fn id(&self) -> String {
-        text(&self.spec, "id", "")
-    }
-}
-
-/// A command or media widget's script and its last result.
-struct CommandState {
-    text: String,
-    urgent: bool,
-    next: f64,
-    proc: Option<Child>,
-    out: Vec<u8>,
-    started: f64,
-    media: Option<Value>,
-}
-
-struct GraphState {
-    source: Source,
-    next: f64,
-    history: Vec<VecDeque<f64>>,
-    columns: usize,
-    error: bool,
+    if truthy(v.get("press")) { Action::Press } else { Action::None }
 }
 
 #[derive(Clone, PartialEq)]
@@ -190,6 +149,21 @@ struct Limit {
     label: String,
     frac: Option<f64>,
     resets: Option<DateTime<FixedOffset>>,
+}
+
+/// A widget's state from the backend. Graph text, cores and battery go into
+/// the widget's `Source` instead, where its label and value helpers read them.
+enum Data {
+    None,
+    Command { text: String, urgent: bool },
+    Agents { visible: bool, limits: Vec<Limit> },
+    Graph { series: Vec<Vec<f64>>, scale: Vec<f64> },
+    Mic { muted: Option<bool>, in_use: bool, levels: Vec<f64> },
+    Media(Value),
+}
+
+fn floats(v: Option<&Value>) -> Vec<f64> {
+    v.and_then(Value::as_array).map_or(vec![], |a| a.iter().filter_map(Value::as_f64).collect())
 }
 
 /// How a dot graph is drawn, from a widget's options.
@@ -208,15 +182,166 @@ enum Part {
     Value,
 }
 
-enum Ready {
-    Sock,
-    Command(String),
-    Mic(MicFd),
-    Media,
+/// One placed widget from the snapshot.
+struct Widget {
+    key: String, // "<layer>.<section>.<index>"
+    layer: Layer,
+    section: String,
+    kind: WidgetKind,
+    spec: Spec, // the widget's options
+    action: Action,
+    rect: [i32; 4], // x0, y0, x1, y1
+    source: Option<Source>, // graphs
+    data: Data,
+}
+
+impl Widget {
+    fn hit(&self, x: i32, y: i32) -> bool {
+        let [x0, y0, x1, y1] = self.rect;
+        x0 <= x && x < x1 && y0 <= y && y < y1
+    }
+
+    fn visible(&self) -> bool {
+        match &self.data {
+            Data::Agents { visible, .. } => *visible,
+            _ => self.kind != WidgetKind::Agents,
+        }
+    }
+
+    /// Take a state object from a snapshot or update.
+    fn set_state(&mut self, state: &Value) {
+        let s = state.as_object();
+        self.data = match self.kind {
+            WidgetKind::Command => Data::Command {
+                text: state.get("text").and_then(Value::as_str).unwrap_or("").into(),
+                urgent: truthy(state.get("urgent")),
+            },
+            WidgetKind::Agents => Data::Agents {
+                visible: truthy(state.get("visible")),
+                limits: state.get("limits").and_then(Value::as_array).into_iter().flatten().map(|l| Limit {
+                    label: l.get("label").and_then(Value::as_str).unwrap_or("Limit").into(),
+                    frac: l.get("fraction").and_then(Value::as_f64),
+                    resets: l.get("resetsAt").and_then(Value::as_str).and_then(parse_time),
+                }).collect(),
+            },
+            WidgetKind::Graph => {
+                if let Some(source) = self.source.as_mut() {
+                    source.lines = state.get("lines").and_then(Value::as_array).into_iter().flatten().filter_map(|l| {
+                        Some((l.get(0)?.as_str()?.to_string(), truthy(l.get(1))))
+                    }).collect();
+                    source.cores = floats(state.get("cores"));
+                    source.battery = state.get("battery").and_then(|b| {
+                        Some((b.get("charge")?.as_i64()?, b.get("status")?.as_str()?.to_string()))
+                    });
+                }
+                let series = state.get("series").and_then(Value::as_array).map_or(vec![], |a| a.iter().map(|s| floats(Some(s))).collect());
+                Data::Graph { series, scale: floats(state.get("scale")) }
+            }
+            WidgetKind::Mic => Data::Mic {
+                muted: state.get("muted").and_then(Value::as_bool),
+                in_use: truthy(state.get("inUse")),
+                levels: floats(state.get("levels")),
+            },
+            WidgetKind::Media => Data::Media(if s.is_some() { state.clone() } else { json!({}) }),
+            _ => Data::None,
+        };
+    }
+}
+
+/// The connection to the backend: its socket, or a backend in this process
+/// (preview and tests) that gets the same lines.
+pub enum Link {
+    Socket { stream: UnixStream, rbuf: Vec<u8>, wbuf: Vec<u8> },
+    Local { backend: Box<Backend>, session: u64 },
+}
+
+impl Link {
+    fn connect(path: &Path) -> io::Result<Link> {
+        let stream = UnixStream::connect(path)?;
+        stream.set_nonblocking(true)?;
+        Ok(Link::Socket { stream, rbuf: vec![], wbuf: vec![] })
+    }
+
+    /// Queue one message line.
+    fn send(&mut self, line: &str) -> Result<(), String> {
+        match self {
+            Link::Socket { wbuf, .. } => {
+                wbuf.extend_from_slice(line.as_bytes());
+                wbuf.push(b'\n');
+                self.flush()
+            }
+            Link::Local { backend, session } => {
+                backend.handle_line(*session, line, now());
+                Ok(())
+            }
+        }
+    }
+
+    /// Write queued lines as far as the socket takes them.
+    fn flush(&mut self) -> Result<(), String> {
+        let Link::Socket { stream, wbuf, .. } = self else { return Ok(()) };
+        while !wbuf.is_empty() {
+            match stream.write(wbuf) {
+                Ok(0) => return Err("backend closed the connection".into()),
+                Ok(n) => {
+                    wbuf.drain(..n);
+                }
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        Ok(())
+    }
+
+    /// Complete lines received so far.
+    fn receive(&mut self) -> Result<Vec<String>, String> {
+        let (stream, rbuf) = match self {
+            Link::Local { backend, session } => return Ok(backend.drain(*session, now())),
+            Link::Socket { stream, rbuf, .. } => (stream, rbuf),
+        };
+        let mut buf = [0u8; 65536];
+        let mut eof = false;
+        loop {
+            match stream.read(&mut buf) {
+                Ok(0) => {
+                    eof = true;
+                    break;
+                }
+                Ok(n) => rbuf.extend_from_slice(&buf[..n]),
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
+                Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        let mut lines = vec![];
+        while let Some(end) = rbuf.iter().position(|&b| b == b'\n') {
+            let line: Vec<u8> = rbuf.drain(..=end).collect();
+            lines.push(String::from_utf8_lossy(&line[..line.len() - 1]).into_owned());
+        }
+        if rbuf.len() >= MAX_LINE {
+            return Err("backend sent a line over 1 MiB".into());
+        }
+        if eof && lines.is_empty() {
+            return Err("backend closed the connection".into());
+        }
+        Ok(lines) // an EOF after lines shows up on the next read
+    }
+
+    fn fd(&self) -> Option<RawFd> {
+        match self {
+            Link::Socket { stream, .. } => Some(stream.as_raw_fd()),
+            Link::Local { .. } => None,
+        }
+    }
+
+    fn wants_write(&self) -> bool {
+        matches!(self, Link::Socket { wbuf, .. } if !wbuf.is_empty())
+    }
 }
 
 pub struct Renderer {
-    conn: Option<Conn>, // None in preview mode
+    conn: Option<Conn>, // t1bridge; None in preview mode and while reconnecting
     buffers: HashMap<u32, Buffer>,
     free: VecDeque<u32>, // buffer ids we may draw into
     w: i32,
@@ -232,37 +357,40 @@ pub struct Renderer {
     widgets: Vec<Widget>,
     owner: HashMap<u8, String>, // contact id -> key of the widget it first touched
     touch_x: HashMap<u8, i32>,  // contact id -> x where it first touched
-    mic: Option<Mic>,           // while a glance.mic widget exists
-    media_watch: Option<Child>, // dbus-monitor for player changes, while a media widget exists
-    media_watch_at: f64,        // earliest (re)start
+    pointers: HashSet<u8>,      // contacts with a press the backend knows about
+    ignored: HashSet<u8>,       // contacts that were down when the widgets changed under them
+    down: HashSet<u8>,          // contacts touching now
     minute: Option<u64>,        // wall-clock minute, for reset times
-    repeat_at: HashMap<u8, f64>, // contact id -> time of next repeat
+    repeat_at: HashMap<u8, f64>, // contact id -> time of the next key repeat
     last_input: f64,
     dimmed: bool,
     fn_held: bool,
     logged_contacts: HashSet<u8>,
     touch_marks: Vec<i32>, // logical x of current touches (test pattern)
-    provider_data: HashMap<String, bool>,
     provider_icons: HashMap<String, ImageSurface>,
-    usage: HashMap<String, (Option<SystemTime>, Vec<Limit>)>,
-    usage_refresh: HashMap<String, (f64, Option<Child>)>,
-    commands: HashMap<String, CommandState>,
-    graphs: HashMap<String, GraphState>,
     theme: HashMap<String, String>, // btop theme colours (default graph gradients)
     theme_mtime: Option<Option<SystemTime>>,
-    children: Vec<Child>, // fire-and-forget processes to reap
-    config_source: Option<(PathBuf, Option<SystemTime>)>,
-    config: Rc<Config>,
-    loaded: bool,
+    config: Config, // presentation settings from the last snapshot
+    link: Option<Link>,
+    next_id: i64,
+    rev: u64,
+    generation: u64,
+    synced: bool,    // drawing from a snapshot
+    resyncing: bool, // missed an update; waiting for the snapshot
+    view_sent: Option<Layer>,
+    offline: bool,   // showing the disconnected state
+    offline_at: f64, // when to show it if no snapshot has come
+    backend_retry: (f64, f64), // (next attempt, delay after that)
+    hw_retry: (f64, f64),
     measure: Context, // scratch context for measuring text outside a frame
     clock: Option<DateTime<FixedOffset>>, // fixed time and zone instead of the system's (golden tests)
 }
 
 impl Renderer {
-    pub fn new(conn: Option<Conn>) -> Renderer {
+    pub fn new(link: Option<Link>) -> Renderer {
         let surface = ImageSurface::create(Format::Rgb24, 1, 1).expect("cairo surface");
         Renderer {
-            conn,
+            conn: None,
             buffers: HashMap::new(),
             free: VecDeque::new(),
             w: 0,
@@ -271,16 +399,16 @@ impl Renderer {
             long: 0,
             short: 0,
             visible: 0,
-            dirty: true,
+            dirty: false,
             damage: HashSet::new(),
             last_frame: None,
             frame_id: 0,
             widgets: vec![],
             owner: HashMap::new(),
             touch_x: HashMap::new(),
-            mic: None,
-            media_watch: None,
-            media_watch_at: 0.0,
+            pointers: HashSet::new(),
+            ignored: HashSet::new(),
+            down: HashSet::new(),
             minute: None,
             repeat_at: HashMap::new(),
             last_input: now(),
@@ -288,7 +416,6 @@ impl Renderer {
             fn_held: false,
             logged_contacts: HashSet::new(),
             touch_marks: vec![],
-            provider_data: HashMap::new(),
             provider_icons: [
                 ("claude", include_bytes!("../assets/agents/claude.png").as_slice()),
                 ("codex", include_bytes!("../assets/agents/codex.png").as_slice()),
@@ -296,22 +423,26 @@ impl Renderer {
                 ImageSurface::create_from_png(&mut std::io::Cursor::new(bytes)).ok()
                     .map(|surface| (name.to_string(), surface))
             }).collect(),
-            usage: HashMap::new(),
-            usage_refresh: HashMap::new(),
-            commands: HashMap::new(),
-            graphs: HashMap::new(),
             theme: HashMap::new(),
             theme_mtime: None,
-            children: vec![],
-            config_source: None,
-            config: Rc::new(Config::parse(DEFAULT_CONFIG).expect("built-in config")),
-            loaded: false,
+            config: settings_config(&json!({"hasFn": false})),
+            link,
+            next_id: 1,
+            rev: 0,
+            generation: 0,
+            synced: false,
+            resyncing: false,
+            view_sent: None,
+            offline: false,
+            offline_at: now() + OFFLINE_AFTER,
+            backend_retry: (0.0, RETRY_MIN),
+            hw_retry: (0.0, RETRY_MIN),
             measure: Context::new(&surface).expect("cairo context"),
             clock: None,
         }
     }
 
-    // --- setup --------------------------------------------------------------
+    // --- t1bridge -----------------------------------------------------------
     fn handshake(&mut self) -> Result<(), String> {
         let features = proto::FEAT_MEMFD | proto::FEAT_INPUT | proto::FEAT_KEYS;
         let hello = Packer::default().u16(0).u16(0).u64(features).0;
@@ -344,6 +475,35 @@ impl Renderer {
         Ok(())
     }
 
+    fn connect_hw(&mut self, t: f64) {
+        let result = Conn::connect(proto::SOCK_PATH).map_err(|e| format!("{}: {e}", proto::SOCK_PATH)).and_then(|conn| {
+            self.conn = Some(conn);
+            self.handshake()
+        });
+        match result {
+            Ok(()) => {
+                self.hw_retry = (0.0, RETRY_MIN);
+                self.relayout(); // the geometry may be new
+            }
+            Err(e) => self.lost_hw(t, &e),
+        }
+    }
+
+    /// Drop the t1bridge connection and try again soon. Touches end with it.
+    fn lost_hw(&mut self, t: f64, why: &str) {
+        if self.hw_retry.1 == RETRY_MIN {
+            log(&format!("t1bridge: {why}; reconnecting"));
+        }
+        self.conn = None;
+        self.buffers.clear();
+        self.free.clear();
+        self.last_frame = None;
+        self.fn_held = false;
+        self.end_touches();
+        let (_, delay) = self.hw_retry;
+        self.hw_retry = (t + delay, (delay * 2.0).min(RETRY_MAX));
+    }
+
     fn set_geometry(&mut self, w: i32, h: i32) {
         self.w = w;
         self.h = h;
@@ -353,129 +513,186 @@ impl Renderer {
         self.visible = self.long.min(VISIBLE_WIDTH);
     }
 
-    // --- config -------------------------------------------------------------
-    fn poll_config(&mut self) {
-        let user = user_config();
-        let path = if user.exists() { user } else { PathBuf::from("<built-in touchbar.default.json>") };
-        let source = (path.clone(), mtime(&path));
-        if self.config_source.as_ref() == Some(&source) {
-            return;
-        }
-        self.config_source = Some(source);
-        let parsed = if path.exists() {
-            fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| Config::parse(&s))
-        } else {
-            Config::parse(DEFAULT_CONFIG)
-        };
-        let config = match parsed {
-            Ok(c) => c,
-            Err(e) => {
-                let what = if self.loaded { "keeping the previous config" } else { "using the default" };
-                log(&format!("{}: {e}; {what}", path.display()));
-                if self.loaded {
-                    return;
-                }
-                Config::parse(DEFAULT_CONFIG).expect("built-in config")
+    // --- backend ------------------------------------------------------------
+    fn connect_backend(&mut self, t: f64) {
+        let path = crate::backend::server::socket_path();
+        match Link::connect(&path) {
+            Ok(link) => {
+                self.link = Some(link);
+                self.offline_at = self.offline_at.min(t + OFFLINE_AFTER);
+                self.request(json!({"type": "hello", "protocol": protocol::PROTOCOL, "output": "touchbar", "client": CLIENT}));
             }
-        };
-        log(&format!("loaded {}", path.display()));
-        self.config = Rc::new(config);
-        self.loaded = true;
-        for state in self.commands.values_mut() {
-            if let Some(p) = state.proc.take() {
-                kill(p);
-            }
+            Err(e) => self.lost_backend(t, &format!("{}: {e}", path.display())),
         }
-        self.commands.clear();
-        self.graphs.clear();
+    }
+
+    /// Show the disconnected state and reconnect soon; the bar stays ours.
+    fn lost_backend(&mut self, t: f64, why: &str) {
+        if self.backend_retry.1 == RETRY_MIN {
+            log(&format!("backend: {why}; reconnecting"));
+        }
+        self.link = None;
+        self.synced = false;
+        self.resyncing = false;
+        self.view_sent = None;
+        self.widgets.clear();
+        self.end_touches();
+        if !self.offline {
+            self.offline = true;
+            self.dirty = true;
+        }
+        let (_, delay) = self.backend_retry;
+        self.backend_retry = (t + delay, (delay * 2.0).min(RETRY_MAX));
+    }
+
+    /// Forget presses; contacts still down are ignored until they lift.
+    fn end_touches(&mut self) {
+        self.ignored.extend(self.down.iter().copied());
         self.owner.clear();
-        self.repeat_at.clear();
         self.touch_x.clear();
-        self.build();
-        let fps = self.widgets.iter().find(|w| w.kind == Kind::Mic).map(|w| int(&w.spec, "fps", 20));
-        match (fps, self.mic.is_some()) {
-            (Some(fps), false) => self.mic = Some(Mic::new(fps)),
-            (None, true) => {
-                if let Some(mut m) = self.mic.take() {
-                    m.close();
+        self.repeat_at.clear();
+        self.pointers.clear();
+        self.dirty = true;
+    }
+
+    /// Send a request; the backend answers with an ack or error we only log.
+    fn request(&mut self, mut msg: Value) {
+        let Some(link) = self.link.as_mut() else { return };
+        msg["id"] = self.next_id.into();
+        self.next_id += 1;
+        if let Err(e) = link.send(&msg.to_string()) {
+            self.lost_backend(now(), &e);
+        }
+    }
+
+    /// Handle everything the backend has sent.
+    pub fn pull(&mut self) {
+        let Some(link) = self.link.as_mut() else { return };
+        match link.receive() {
+            Ok(lines) => {
+                for line in lines {
+                    match serde_json::from_str::<Value>(&line) {
+                        Ok(msg) => self.on_message(&msg),
+                        Err(e) => log(&format!("backend sent invalid JSON: {e}")),
+                    }
+                }
+            }
+            Err(e) => self.lost_backend(now(), &e),
+        }
+    }
+
+    fn on_message(&mut self, msg: &Value) {
+        match msg.get("type").and_then(Value::as_str) {
+            Some("snapshot") => self.on_snapshot(msg),
+            Some("update") => self.on_update(msg),
+            Some("welcome") => log(&format!("backend session {}", msg["session"].as_str().unwrap_or("?"))),
+            Some("error") => {
+                let code = msg["code"].as_str().unwrap_or("");
+                // A release after the backend dropped the press itself (hidden widget, reload).
+                if code != error::UNKNOWN_POINTER {
+                    log(&format!("backend: {code}: {}", msg["message"].as_str().unwrap_or("")));
                 }
             }
             _ => {}
         }
-        self.dirty = true;
     }
 
-    /// Create the widgets of both layers from the config, then place them.
-    fn build(&mut self) {
-        self.widgets.clear();
-        let config = self.config.clone();
-        for (layer, section, items) in &config.layers {
-            let lname = if *layer == Layer::Fn { "fn" } else { "default" };
-            for (i, spec) in items.iter().enumerate() {
-                let Some(kind) = kind_of(spec) else {
-                    log(&format!("layers.{lname}.{section}[{i}]: unknown widget {:?}", text(spec, "id", "")));
-                    continue;
-                };
-                self.widgets.push(Widget {
-                    key: format!("{lname}.{section}.{i}"),
-                    layer: *layer,
-                    section,
-                    kind,
-                    spec: spec.clone(),
-                    rect: [0; 4],
-                    repeats: kind == Kind::Button && truthy(spec.get("repeat")),
-                });
-            }
+    fn on_snapshot(&mut self, msg: &Value) {
+        let generation = msg["config"]["generation"].as_u64().unwrap_or(0);
+        if generation != self.generation || !self.synced {
+            self.end_touches(); // the backend ended these presses with the old config
         }
-        for w in &self.widgets {
-            if matches!(w.kind, Kind::Command | Kind::Media) {
-                self.commands.entry(w.key.clone()).or_insert_with(|| CommandState {
-                    text: String::new(),
-                    urgent: false,
-                    next: 0.0,
-                    proc: None,
-                    out: vec![],
-                    started: 0.0,
-                    media: None,
-                });
+        self.config = settings_config(&msg["settings"]);
+        let mut widgets = vec![];
+        for v in msg["widgets"].as_array().into_iter().flatten() {
+            let Some(kind) = v["kind"].as_str().and_then(WidgetKind::parse) else { continue };
+            if v["supported"] == false {
+                continue;
             }
-            if w.kind == Kind::Graph && !self.graphs.contains_key(&w.key) {
-                let kind = sources::kind_of(&w.id()).unwrap();
-                let columns = graph_columns(&w.spec);
-                self.graphs.insert(w.key.clone(), GraphState {
-                    source: Source::new(kind, &w.spec),
-                    next: 0.0,
-                    history: vec![VecDeque::with_capacity(columns); if kind_is_mirrored(kind) { 2 } else { 1 }],
-                    columns,
-                    error: false,
-                });
-            }
-        }
-        self.relayout();
-    }
-
-    /// Re-place widgets after a width change (fingers stay attached by key).
-    fn relayout(&mut self) {
-        let config = self.config.clone();
-        for (layer, section, _) in &config.layers {
-            let idx: Vec<usize> =
-                (0..self.widgets.len()).filter(|&i| self.widgets[i].layer == *layer && self.widgets[i].section == *section).collect();
-            let widths: Vec<i32> = idx.iter().map(|&i| self.width_of(&self.widgets[i])).collect();
-            let total: i32 = widths.iter().sum();
-            let mut x = match *section {
-                "left" => 0,
-                "center" => (self.visible - total).div_euclid(2),
-                _ => self.visible - total,
+            let spec = v["options"].as_object().cloned().unwrap_or_default();
+            let id = text(&spec, "id", "");
+            let mut w = Widget {
+                key: v["key"].as_str().unwrap_or("").into(),
+                layer: if v["layer"] == "fn" { Layer::Fn } else { Layer::Default },
+                section: v["section"].as_str().unwrap_or("").into(),
+                kind,
+                action: parse_action(&v["action"]),
+                rect: [0; 4],
+                source: sources::kind_of(&id).filter(|_| kind == WidgetKind::Graph).map(|k| Source::new(k, &spec)),
+                data: Data::None,
+                spec,
             };
-            for (&i, width) in idx.iter().zip(widths) {
-                self.widgets[i].rect = [x, 0, x + width, self.short];
-                x += width;
+            w.set_state(&v["state"]);
+            widgets.push(w);
+        }
+        self.widgets = widgets;
+        (self.generation, self.rev) = (generation, msg["rev"].as_u64().unwrap_or(0));
+        (self.synced, self.resyncing, self.offline) = (true, false, false);
+        self.backend_retry = (0.0, RETRY_MIN);
+        self.relayout();
+        self.sync_view();
+    }
+
+    fn on_update(&mut self, msg: &Value) {
+        if !self.synced || self.resyncing {
+            return;
+        }
+        let rev = msg["rev"].as_u64().unwrap_or(0);
+        if rev != self.rev + 1 {
+            log(&format!("missed backend updates (rev {rev} after {}); resyncing", self.rev));
+            self.resyncing = true;
+            self.request(json!({"type": "resync"}));
+            return;
+        }
+        self.rev = rev;
+        let mut moved = false;
+        for (key, state) in msg["widgets"].as_object().into_iter().flatten() {
+            let Some(i) = self.widgets.iter().position(|w| w.key == *key) else { continue };
+            let before = self.width_of(&self.widgets[i]);
+            self.widgets[i].set_state(state);
+            moved |= self.width_of(&self.widgets[i]) != before;
+            self.damage.insert(key.clone());
+        }
+        if moved {
+            self.relayout(); // a command's text, the waveform or an agents widget changed size
+        }
+    }
+
+    /// Tell the backend which layer is on screen (it runs media and mic for that).
+    fn sync_view(&mut self) {
+        let layer = self.visible_layer();
+        if self.synced && self.view_sent != Some(layer) {
+            self.view_sent = Some(layer);
+            let name = if layer == Layer::Fn { "fn" } else { "default" };
+            self.request(json!({"type": "view", "layer": name, "shown": true}));
+        }
+    }
+
+    // --- layout -------------------------------------------------------------
+    /// Place the widgets of both layers (fingers stay attached by key).
+    fn relayout(&mut self) {
+        for layer in [Layer::Default, Layer::Fn] {
+            for section in SECTIONS {
+                let idx: Vec<usize> =
+                    (0..self.widgets.len()).filter(|&i| self.widgets[i].layer == layer && self.widgets[i].section == section).collect();
+                let widths: Vec<i32> = idx.iter().map(|&i| self.width_of(&self.widgets[i])).collect();
+                let total: i32 = widths.iter().sum();
+                let mut x = match section {
+                    "left" => 0,
+                    "center" => (self.visible - total).div_euclid(2),
+                    _ => self.visible - total,
+                };
+                for (&i, width) in idx.iter().zip(widths) {
+                    self.widgets[i].rect = [x, 0, x + width, self.short];
+                    x += width;
+                }
             }
         }
-        let hidden: HashSet<String> = self.widgets.iter().filter(|w| !self.widget_has_data(w)).map(|w| w.key.clone()).collect();
+        let hidden: HashSet<String> = self.widgets.iter().filter(|w| !w.visible()).map(|w| w.key.clone()).collect();
         self.owner.retain(|_, key| !hidden.contains(key));
         self.repeat_at.retain(|cid, _| self.owner.contains_key(cid));
         self.touch_x.retain(|cid, _| self.owner.contains_key(cid));
+        self.pointers.retain(|cid| self.owner.contains_key(cid)); // the backend drops those presses too
         self.dirty = true;
     }
 
@@ -486,33 +703,29 @@ impl Renderer {
     }
 
     fn width_of(&self, w: &Widget) -> i32 {
-        if !self.widget_has_data(w) { return 0; }
+        if !w.visible() { return 0; }
         let s = &w.spec;
         match w.kind {
-            Kind::Spacer => int(s, "size", 40) as i32,
-            Kind::Agents if text(s, "layout", "") == "stacked" => {
+            WidgetKind::Spacer => int(s, "size", 40) as i32,
+            WidgetKind::Agents if text(s, "layout", "") == "stacked" => {
                 let (label_w, pct_w, reset_w) = self.stacked_columns(w);
                 let reset_w = if reset_w != 0 { reset_w + 12 } else { 0 };
                 14 + 30 + 14 + label_w + 10 + meter_width(s) + 10 + pct_w + reset_w + 16 + 2 * KEY_PAD
             }
-            Kind::Agents => {
+            WidgetKind::Agents => {
                 let n = self.limits_for(w).len() as i32;
                 14 + 30 + 14 + n * meter_width(s) + (n - 1) * 24 + 16 + 2 * KEY_PAD
             }
-            Kind::Graph => self.graph_parts(w).iter().map(|(_, width)| width).sum::<i32>() + 2 * 14 + 2 * KEY_PAD,
-            Kind::Mic if self.mic_recording(w) => self.mic_layout(w).2,
-            Kind::Media => 3 * int(s, "buttonWidth", 100) as i32 + int(s, "titleWidth", 360) as i32,
-            Kind::Command if !truthy(s.get("width")) => {
-                let t = self.commands.get(&w.key).map_or("", |c| c.text.as_str());
+            WidgetKind::Graph => self.graph_parts(w).iter().map(|(_, width)| width).sum::<i32>() + 2 * 14 + 2 * KEY_PAD,
+            WidgetKind::Mic if self.mic_recording(w) => self.mic_layout(w).2,
+            WidgetKind::Media => 3 * int(s, "buttonWidth", 100) as i32 + int(s, "titleWidth", 360) as i32,
+            WidgetKind::Command if !truthy(s.get("width")) => {
+                let t = match &w.data { Data::Command { text, .. } => text.as_str(), _ => "" };
                 let adv = self.text_ext(t, num(s, "fontSize", 18.0)).x_advance() as i32;
                 (KEY_WIDTH as i32 / 2).max(adv + 32 + 2 * KEY_PAD)
             }
             _ => int(s, "width", KEY_WIDTH) as i32,
         }
-    }
-
-    fn widget_has_data(&self, w: &Widget) -> bool {
-        w.kind != Kind::Agents || self.provider_data.get(&text(&w.spec, "agent", "claude")).copied().unwrap_or(false)
     }
 
     fn widget(&self, key: &str) -> Option<&Widget> {
@@ -535,41 +748,31 @@ impl Renderer {
     }
 
     // --- actions ------------------------------------------------------------
-    fn press(&mut self, key: &str, lx: Option<i32>) {
+    /// A contact touched a widget: tap its key here, or ask the backend.
+    fn press(&mut self, cid: u8, key: &str, lx: i32, t: f64) {
         let Some(w) = self.widget(key) else { return };
-        let s = &w.spec;
-        let cmd = match w.kind {
-            Kind::Esc => {
-                self.tap_key("esc");
-                return;
-            }
-            Kind::Button if truthy(s.get("key")) => {
-                let name = text(s, "key", "").to_lowercase();
+        let zone = match &w.action {
+            Action::None => return,
+            Action::Key { name, repeat } => {
+                let (name, repeat) = (name.clone(), *repeat);
                 self.tap_key(&name);
+                if repeat {
+                    self.repeat_at.insert(cid, t + self.config.repeat_delay);
+                }
                 return;
             }
-            Kind::Button => text(s, "exec", ""),
-            Kind::Agents => text(s, "onTap", AGENTS_TOGGLE),
-            Kind::Graph => text(s, "onTap", ACTIVITY),
-            Kind::Mic => text(s, "onTap", MIC_TOGGLE),
-            Kind::Media => match media_zone(w, lx) {
-                Some("previous") => "omarchy-shell -q media previous".into(),
-                Some("playPause") => "omarchy-shell -q media playPause".into(),
-                Some("next") => "omarchy-shell -q media next".into(),
-                Some(_) => text(s, "onTap", ""),
-                None => String::new(),
+            Action::Press => None,
+            Action::Zones(zones) => match media_zone(w, Some(lx)) {
+                Some(z) if zones.iter().any(|c| c == z) => Some(z),
+                _ => return,
             },
-            Kind::Command => text(s, "onTap", ""),
-            Kind::Spacer => String::new(),
         };
-        if cmd.is_empty() {
-            return;
+        let mut msg = json!({"type": "press", "generation": self.generation, "widget": key, "pointer": cid});
+        if let Some(zone) = zone {
+            msg["zone"] = zone.into();
         }
-        let is_media = w.kind == Kind::Media;
-        self.spawn(&cmd);
-        if is_media && let Some(state) = self.commands.get_mut(key).filter(|s| s.proc.is_none()) {
-            state.next = now() + 0.3; // show the new state soon
-        }
+        self.pointers.insert(cid);
+        self.request(msg);
     }
 
     fn tap_key(&mut self, name: &str) {
@@ -593,201 +796,9 @@ impl Renderer {
         }
     }
 
-    /// Run a shell command without blocking the render loop.
-    fn spawn(&mut self, cmd: &str) {
-        match shell(cmd, false) {
-            Ok(p) => self.children.push(p),
-            Err(e) => log(&format!("could not run {cmd:?}: {e}")),
-        }
-    }
-
-    // --- command widgets ----------------------------------------------------
-    fn run_commands(&mut self, t: f64) {
-        self.children.retain_mut(|p| matches!(p.try_wait(), Ok(None)));
-        let layer = self.visible_layer();
-        let mut timed_out = vec![];
-        for w in &self.widgets {
-            let cmd = match w.kind {
-                Kind::Media => MEDIA_STATUS.to_string(),
-                Kind::Command => text(&w.spec, "exec", ""),
-                _ => continue,
-            };
-            if cmd.is_empty() {
-                continue;
-            }
-            let state = self.commands.get_mut(&w.key).unwrap();
-            if w.kind == Kind::Media && state.proc.is_none() && w.layer != layer {
-                continue; // only ask for player state while it's on screen
-            }
-            if state.proc.is_some() && t - state.started > COMMAND_TIMEOUT {
-                log(&format!("{}: command timed out", w.id()));
-                timed_out.push(w.key.clone());
-            } else if state.proc.is_none() && t >= state.next {
-                match shell(&cmd, true) {
-                    Ok(p) => {
-                        state.proc = Some(p);
-                        state.out.clear();
-                        state.started = t;
-                    }
-                    Err(e) => log(&format!("{}: could not run: {e}", w.id())),
-                }
-                let interval = num(&w.spec, "interval", if w.kind == Kind::Media { 30.0 } else { 0.0 });
-                state.next = if interval > 0.0 { t + interval } else { f64::INFINITY };
-            }
-        }
-        for key in timed_out {
-            if let Some(p) = self.commands.get_mut(&key).and_then(|s| s.proc.as_mut()) {
-                let _ = p.kill();
-            }
-            self.finish_command(&key);
-        }
-    }
-
-    /// Next runs of command and media widgets (media only while shown).
-    fn command_deadlines(&self) -> Vec<f64> {
-        let layer = self.visible_layer();
-        self.widgets
-            .iter()
-            .filter_map(|w| self.commands.get(&w.key).map(|s| (w, s)))
-            .filter(|(w, s)| s.proc.is_none() && (w.kind != Kind::Media || w.layer == layer))
-            .map(|(_, s)| s.next)
-            .collect()
-    }
-
-    fn read_command(&mut self, key: &str) {
-        let state = self.commands.get_mut(key).unwrap();
-        let mut buf = vec![0u8; 65536];
-        let n = state.proc.as_mut().and_then(|p| p.stdout.as_mut()).map_or(Ok(0), |s| s.read(&mut buf)).unwrap_or(0);
-        if n > 0 && state.out.len() < 65536 {
-            state.out.extend_from_slice(&buf[..n]);
-            return;
-        }
-        self.finish_command(key);
-    }
-
-    fn finish_command(&mut self, key: &str) {
-        let Some(state) = self.commands.get_mut(key) else { return };
-        if let Some(mut p) = state.proc.take() {
-            drop(p.stdout.take());
-            reap(p, 1.0);
-        }
-        let out = String::from_utf8_lossy(&state.out).trim().to_string();
-        let Some(w) = self.widgets.iter().find(|w| w.key == key) else { return };
-        if w.kind == Kind::Media {
-            let media = serde_json::from_str::<Value>(&out).ok().filter(Value::is_object).unwrap_or(Value::Object(Spec::new()));
-            if state.media.as_ref() != Some(&media) {
-                state.media = Some(media);
-                self.damage.insert(key.to_string());
-            }
-            return;
-        }
-        // Plain text, or Waybar-style JSON: {"text": ..., "class": ...}
-        let mut text_out = out.lines().next().unwrap_or("").to_string();
-        let mut urgent = false;
-        if out.starts_with('{') && let Ok(Value::Object(data)) = serde_json::from_str::<Value>(&out) {
-            text_out = text(&data, "text", "");
-            urgent = match data.get("class") {
-                Some(Value::String(c)) => c == "urgent" || c == "critical",
-                Some(Value::Array(a)) => a.iter().any(|c| matches!(c.as_str(), Some("urgent" | "critical"))),
-                _ => false,
-            };
-        }
-        if (text_out.as_str(), urgent) != (state.text.as_str(), state.urgent) {
-            state.text = text_out;
-            state.urgent = urgent;
-            let fixed = truthy(w.spec.get("width"));
-            if !fixed {
-                self.relayout();
-            }
-            self.damage.insert(key.to_string());
-        }
-    }
-
-    // --- agent usage records -----------------------------------------------
-    /// Read limits for every agents widget from its Omarchy usage record.
-    fn poll_usage(&mut self) {
-        self.poll_usage_at(&usage_dir());
-    }
-
-    // Refresh configured providers even when their records are missing or their
-    // widgets are hidden. Each provider has its own nonblocking job and cadence.
-    fn refresh_usage(&mut self, t: f64) {
-        let agents: HashSet<String> = self.widgets.iter()
-            .filter(|w| w.kind == Kind::Agents)
-            .map(|w| text(&w.spec, "agent", "claude")).collect();
-        for agent in agents {
-            // The updater interprets leading dashes as options.
-            if agent.is_empty() || !agent.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-                || agent.starts_with('-') {
-                continue;
-            }
-            let (next, job) = self.usage_refresh.entry(agent.clone()).or_insert((0.0, None));
-            if let Some(child) = job.as_mut() {
-                match child.try_wait() {
-                    Ok(None) => continue,
-                    Ok(Some(status)) => {
-                        if !status.success() { log(&format!("usage refresh for {agent} exited with {status}")); }
-                    }
-                    Err(e) => log(&format!("usage refresh for {agent}: {e}")),
-                }
-                *job = None;
-            }
-            if t < *next { continue; }
-            *next = t + 60.0;
-            match popen(&["timeout", "--kill-after=5s", "120s", "omarchy-agent-usage-update", &agent], false) {
-                Ok(child) => *job = Some(child),
-                Err(e) => log(&format!("could not refresh usage for {agent}: {e}")),
-            }
-        }
-    }
-
-    fn poll_usage_at(&mut self, directory: &std::path::Path) {
-        let agents: HashSet<String> =
-            self.widgets.iter().filter(|w| w.kind == Kind::Agents).map(|w| text(&w.spec, "agent", "claude")).collect();
-        for agent in agents {
-            let path = directory.join(format!("{agent}.json"));
-            let mt = mtime(&path);
-            if self.usage.get(&agent).is_some_and(|o| o.0 == mt) {
-                continue;
-            }
-            let record = fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| {
-                serde_json::from_str::<Value>(&s).map_err(|e| e.to_string())
-            });
-            if let Err(e) = &record && mt.is_some() {
-                log(&format!("unreadable usage record {}: {e}", path.display()));
-            }
-            self.set_usage(agent, mt, record.ok());
-        }
-    }
-
-    /// Take an agent's usage record (None when missing or unreadable).
-    fn set_usage(&mut self, agent: String, mt: Option<SystemTime>, record: Option<Value>) {
-        let mut limits = vec![];
-        let has_data = record.as_ref().is_some_and(provider_has_data);
-        for entry in record.iter().filter_map(|r| r.get("limits")?.as_array()).flatten() {
-            let Some(entry) = entry.as_object() else { continue };
-            let frac = num(entry, "percent", -1.0);
-            if frac >= 0.0 {
-                let label = text(entry, "label", "");
-                let label = label.split(" (").next().unwrap_or("").to_string();
-                limits.push(Limit {
-                    label: if label.is_empty() { "Limit".into() } else { label },
-                    frac: Some(frac),
-                    resets: entry.get("resetsAt").and_then(Value::as_str).and_then(parse_time),
-                });
-            }
-        }
-        let changed = self.usage.get(&agent).is_none_or(|o| o.1 != limits)
-            || self.provider_data.get(&agent).copied() != Some(has_data);
-        self.provider_data.insert(agent.clone(), has_data);
-        self.usage.insert(agent, (mt, limits));
-        if changed {
-            self.relayout();
-        }
-    }
-
+    // --- agents widgets -----------------------------------------------------
     fn limits_for(&self, w: &Widget) -> Vec<Limit> {
-        let limits = self.usage.get(&text(&w.spec, "agent", "claude")).map(|u| u.1.clone()).unwrap_or_default();
+        let limits = match &w.data { Data::Agents { limits, .. } => limits.clone(), _ => vec![] };
         if !limits.is_empty() {
             return limits;
         }
@@ -817,29 +828,11 @@ impl Renderer {
         (label_w as i32, self.text_ext("100%", STACKED_FONT).x_advance() as i32, reset_w as i32)
     }
 
-    // --- mic and media widgets ---------------------------------------------
-    fn update_mic(&mut self, t: f64) {
-        let wanted = self.widgets.iter().any(|w| w.kind == Kind::Mic && w.layer == self.visible_layer());
-        let Some(mic) = self.mic.as_mut() else { return };
-        mic.set_wanted(wanted);
-        mic.tick(t);
-        if !mic.changed {
-            return;
-        }
-        mic.changed = false;
-        let mics: Vec<usize> = (0..self.widgets.len()).filter(|&i| self.widgets[i].kind == Kind::Mic).collect();
-        if mics.iter().any(|&i| self.width_of(&self.widgets[i]) != self.widgets[i].rect[2] - self.widgets[i].rect[0]) {
-            self.relayout(); // the waveform appeared or went away
-        }
-        for i in mics {
-            self.damage.insert(self.widgets[i].key.clone());
-        }
-    }
-
+    // --- mic widget ---------------------------------------------------------
     /// Show the waveform: another app is recording and the mic is live.
     fn mic_recording(&self, w: &Widget) -> bool {
         let wave = w.spec.get("waveform").is_none_or(|v| truthy(Some(v)));
-        self.mic.as_ref().is_some_and(|m| m.in_use && m.muted == Some(false)) && wave
+        matches!(w.data, Data::Mic { muted: Some(false), in_use: true, .. }) && wave
     }
 
     /// Recording layout, relative to the widget's left edge: (icon centre x,
@@ -857,43 +850,6 @@ impl Renderer {
         (left + icon_w / 2.0, wave_x, pyround(right + pad + f64::from(KEY_PAD)) as i32)
     }
 
-    fn update_media_watch(&mut self, t: f64) {
-        let want = self.widgets.iter().any(|w| w.kind == Kind::Media);
-        if let Some(p) = self.media_watch.as_mut() {
-            let exited = !matches!(p.try_wait(), Ok(None));
-            if !want || exited {
-                kill(self.media_watch.take().unwrap());
-            }
-        }
-        if want && self.media_watch.is_none() && t >= self.media_watch_at {
-            self.media_watch_at = t + 5.0;
-            match crate::proc::popen(&MEDIA_WATCH, true) {
-                Ok(p) => self.media_watch = Some(p),
-                Err(e) => log(&format!("media: could not run dbus-monitor: {e}")),
-            }
-        }
-    }
-
-    fn read_media_watch(&mut self) {
-        let mut buf = vec![0u8; 65536];
-        let n = self.media_watch.as_mut().and_then(|p| p.stdout.as_mut()).map_or(Ok(0), |s| s.read(&mut buf)).unwrap_or(0);
-        if n == 0 {
-            if let Some(p) = self.media_watch.take() {
-                kill(p);
-            }
-            return;
-        }
-        let chunk = &buf[..n];
-        let has = |needle: &[u8]| chunk.windows(needle.len()).any(|w| w == needle);
-        if has(b"PropertiesChanged") || has(b"NameOwnerChanged") {
-            let soon = now() + 0.15;
-            for w in self.widgets.iter().filter(|w| w.kind == Kind::Media) {
-                let state = self.commands.get_mut(&w.key).unwrap();
-                state.next = state.next.min(soon);
-            }
-        }
-    }
-
     // --- graph widgets ------------------------------------------------------
     fn poll_theme(&mut self) {
         let mt = mtime(&home().join(BTOP_THEME));
@@ -901,34 +857,6 @@ impl Renderer {
             self.theme_mtime = Some(mt);
             self.theme = read_btop_theme();
             self.dirty = true;
-        }
-    }
-
-    fn sample_graphs(&mut self, t: f64) {
-        for w in &self.widgets {
-            let Some(g) = self.graphs.get_mut(&w.key) else { continue };
-            if t < g.next {
-                continue;
-            }
-            g.next = t + num(&w.spec, "interval", 1.0).max(0.25);
-            match g.source.sample() {
-                Ok(values) => {
-                    for (history, v) in g.history.iter_mut().zip(values.unwrap_or_default()) {
-                        if history.len() == g.columns {
-                            history.pop_front();
-                        }
-                        history.push_back(v);
-                    }
-                    g.error = false;
-                }
-                Err(e) => {
-                    if !g.error {
-                        log(&format!("{}: {e}", w.id()));
-                    }
-                    g.error = true;
-                }
-            }
-            self.damage.insert(w.key.clone());
         }
     }
 
@@ -964,14 +892,13 @@ impl Renderer {
     fn graph_parts(&self, w: &Widget) -> Vec<(Part, i32)> {
         let (s, gap) = (&w.spec, 12);
         let sp = dot_style(s).sp;
-        let Some(g) = self.graphs.get(&w.key) else { return vec![] };
-        let source = &g.source;
+        let Some(source) = w.source.as_ref() else { return vec![] };
         let label = source.label_text();
         let mut parts = vec![];
         if !label.is_empty() {
             parts.push((Part::Label, self.text_ext(&label, num(s, "fontSize", 18.0)).x_advance() as i32 + gap));
         }
-        parts.push((Part::Graph, g.columns as i32 * sp));
+        parts.push((Part::Graph, graph_columns(s) as i32 * sp));
         if truthy(s.get("cores")) && source.kind == sources::Kind::Cpu {
             let cores = if source.cores.is_empty() { cpu_count() } else { source.cores.len() };
             parts.push((Part::Cores, gap + (3 * cores as i32 - 1) * sp));
@@ -1179,9 +1106,9 @@ impl Renderer {
 
     fn draw_command(&self, cr: &Context, w: &Widget) {
         self.draw_key_face(cr, w);
-        let state = &self.commands[&w.key];
-        let c = if state.urgent { self.config.urgent } else { self.config.text };
-        self.draw_label(cr, &state.text, w, num(&w.spec, "fontSize", 18.0), c);
+        let (t, urgent) = match &w.data { Data::Command { text, urgent } => (text.as_str(), *urgent), _ => ("", false) };
+        let c = if urgent { self.config.urgent } else { self.config.text };
+        self.draw_label(cr, t, w, num(&w.spec, "fontSize", 18.0), c);
     }
 
     /// Provider marks from the Omarchy agents panel, with a glyph fallback.
@@ -1305,9 +1232,9 @@ impl Renderer {
     /// Key-style container: label, history graph, per-core meters, current value.
     fn draw_graph(&self, cr: &Context, w: &Widget) {
         let s = &w.spec;
-        let g = &self.graphs[&w.key];
+        let (Some(source), Data::Graph { series, scale }) = (w.source.as_ref(), &w.data) else { return };
+        let columns = graph_columns(s);
         let style = dot_style(s);
-        let source = &g.source;
         let gradients = self.graph_gradients(w, source);
         self.draw_key_face(cr, w);
         let (mut x, cy) = (f64::from(w.rect[0] + KEY_PAD + 14), f64::from(self.short) / 2.0);
@@ -1317,17 +1244,15 @@ impl Renderer {
                     self.draw_text_at(cr, &source.label_text(), x, cy, num(s, "fontSize", 18.0), self.config.text, false);
                 }
                 Part::Graph if source.meter() => {
-                    self.draw_meter(cr, w, g.columns, x, g.history[0].back().copied(), &gradients[0]);
+                    let level = series.first().and_then(|s| s.last()).copied();
+                    self.draw_meter(cr, w, columns, x, level, &gradients[0]);
                 }
                 Part::Graph => {
-                    for (i, history) in g.history.iter().enumerate() {
-                        let scale = match source.scale(history) {
-                            s if s != 0.0 => s,
-                            _ => 1.0,
-                        };
+                    for (i, history) in series.iter().enumerate() {
+                        let scale = scale.get(i).copied().filter(|s| *s != 0.0).unwrap_or(1.0);
                         let values: Vec<f64> = history.iter().map(|v| v / scale).collect();
                         let half = if source.mirrored() { if i == 0 { 1 } else { -1 } } else { 0 };
-                        self.draw_dots(cr, &style, x, &values, g.columns, &gradients[i], half);
+                        self.draw_dots(cr, &style, x, &values, columns, &gradients[i.min(gradients.len() - 1)], half);
                     }
                 }
                 Part::Cores => {
@@ -1367,9 +1292,8 @@ impl Renderer {
         let [x0, y0, _, y1] = w.rect.map(f64::from);
         self.draw_key_face(cr, w);
         let active = hex_rgb(s.get("activeColor"), self.config.urgent);
-        let m = self.mic.as_ref();
-        let (icon, c) = match m {
-            Some(m) if m.muted == Some(false) => (ICON_MIC, if m.in_use { active } else { self.config.text }),
+        let (icon, c) = match &w.data {
+            Data::Mic { muted: Some(false), in_use, .. } => (ICON_MIC, if *in_use { active } else { self.config.text }),
             _ => (ICON_MIC_MUTED, hex_rgb(s.get("mutedColor"), rgb(0x80, 0x80, 0x80))),
         };
         let size = num(s, "iconSize", 30.0);
@@ -1382,17 +1306,17 @@ impl Renderer {
         let mut style = dot_style(s);
         style.grid = false; // grid-free dots in the active colour, growing out from the middle
         let columns = (int(s, "waveformWidth", 120) / i64::from(style.sp)) as usize;
-        let levels: Vec<f64> = m.map_or(vec![], |m| m.levels.iter().copied().collect());
+        let levels: &[f64] = match &w.data { Data::Mic { levels, .. } => levels, _ => &[] };
         for half in [1, -1] {
-            self.draw_dots(cr, &style, x0 + wave_x, &levels, columns, &[active], half);
+            self.draw_dots(cr, &style, x0 + wave_x, levels, columns, &[active], half);
         }
     }
 
     /// Previous / play-pause / next keys and the track, from Omarchy's media service.
     fn draw_media(&self, cr: &Context, w: &Widget) {
         let s = &w.spec;
-        let empty = Value::Object(Spec::new());
-        let media = self.commands[&w.key].media.as_ref().unwrap_or(&empty);
+        let empty = json!({});
+        let media = match &w.data { Data::Media(m) => m, _ => &empty };
         let flag = |k: &str| truthy(media.get(k));
         let field = |k: &str| media.get(k).and_then(Value::as_str).filter(|v| !v.is_empty()).map(String::from);
         let [x0, y0, x1, y1] = w.rect.map(f64::from);
@@ -1415,7 +1339,8 @@ impl Renderer {
             self.draw_text(cr, icon, zx + bw / 2.0, (y0 + y1) / 2.0, num(s, "iconSize", 28.0), c);
         }
         let tx = x0 + 3.0 * bw;
-        self.draw_face(cr, tx, y0, x1, y1, pressed.contains("title") && truthy(s.get("onTap")));
+        let title_tap = matches!(&w.action, Action::Zones(z) if z.iter().any(|z| z == "title"));
+        self.draw_face(cr, tx, y0, x1, y1, pressed.contains("title") && title_tap);
         let pad = f64::from(KEY_PAD);
         cr.save().ok();
         cr.rectangle(tx + pad + 12.0, y0, x1 - tx - 2.0 * pad - 24.0, y1 - y0);
@@ -1459,6 +1384,13 @@ impl Renderer {
         }
     }
 
+    /// The backend is gone: say so, so a blank bar isn't mistaken for a hang.
+    fn draw_offline(&self, cr: &Context) {
+        cr.set_font_size(17.0);
+        let x = (f64::from(self.visible) - extents(cr, OFFLINE_TEXT).x_advance()) / 2.0;
+        self.draw_text_at(cr, OFFLINE_TEXT, x, f64::from(self.short) / 2.0, 17.0, rgb(0x80, 0x80, 0x80), false);
+    }
+
     // --- frames -------------------------------------------------------------
     fn background(&self) -> Rgb {
         let c = &self.config;
@@ -1479,7 +1411,7 @@ impl Renderer {
         cr.select_font_face(&self.config.font, FontSlant::Normal, FontWeight::Normal);
         let layer = self.visible_layer();
         let widgets: Vec<&Widget> =
-            self.widgets.iter().filter(|w| w.layer == layer && self.widget_has_data(w) && only.is_none_or(|o| o.contains(&w.key))).collect();
+            self.widgets.iter().filter(|w| w.layer == layer && w.visible() && only.is_none_or(|o| o.contains(&w.key))).collect();
         let bg = self.background();
         match only {
             None => self.fill(&cr, 0, 0, self.long, self.short, bg),
@@ -1490,20 +1422,23 @@ impl Renderer {
                 }
             }
         }
+        if !self.synced {
+            self.draw_offline(&cr);
+        }
         for w in &widgets {
             let [x0, y0, x1, y1] = w.rect;
             cr.save().ok();
             cr.rectangle(f64::from(x0), f64::from(y0), f64::from(x1 - x0), f64::from(y1 - y0));
             cr.clip();
             match w.kind {
-                Kind::Esc => self.draw_esc(&cr, w),
-                Kind::Button => self.draw_button(&cr, w),
-                Kind::Command => self.draw_command(&cr, w),
-                Kind::Agents => self.draw_agents(&cr, w),
-                Kind::Graph => self.draw_graph(&cr, w),
-                Kind::Mic => self.draw_mic(&cr, w),
-                Kind::Media => self.draw_media(&cr, w),
-                Kind::Spacer => {}
+                WidgetKind::Esc => self.draw_esc(&cr, w),
+                WidgetKind::Button => self.draw_button(&cr, w),
+                WidgetKind::Command => self.draw_command(&cr, w),
+                WidgetKind::Agents => self.draw_agents(&cr, w),
+                WidgetKind::Graph => self.draw_graph(&cr, w),
+                WidgetKind::Mic => self.draw_mic(&cr, w),
+                WidgetKind::Media => self.draw_media(&cr, w),
+                WidgetKind::Spacer => {}
             }
             cr.restore().ok();
         }
@@ -1520,9 +1455,10 @@ impl Renderer {
         widgets.iter().map(|w| w.rect).collect()
     }
 
-    /// Submit a frame: in full, or just the widgets in self.damage.
+    /// Submit a frame: in full, or just the widgets in self.damage. Nothing
+    /// is drawn before the first snapshot until the disconnected state shows.
     fn present(&mut self) -> Result<(), String> {
-        if !(self.dirty || !self.damage.is_empty()) || self.free.is_empty() {
+        if !(self.dirty || !self.damage.is_empty()) || self.free.is_empty() || !(self.synced || self.offline) {
             return Ok(());
         }
         let buf_id = self.free.pop_front().unwrap();
@@ -1588,28 +1524,31 @@ impl Renderer {
         }
 
         // A contact belongs to whatever it first touched until it lifts.
-        let down: HashSet<u8> = touching.iter().map(|t| t.0).collect();
+        self.down = touching.iter().map(|t| t.0).collect();
+        let lifted: Vec<u8> = self.pointers.iter().filter(|c| !self.down.contains(c)).copied().collect();
+        for cid in lifted {
+            self.pointers.remove(&cid);
+            self.request(json!({"type": "release", "pointer": cid}));
+        }
+        let down = self.down.clone();
         self.owner.retain(|cid, _| down.contains(cid));
         self.touch_x.retain(|cid, _| down.contains(cid));
         self.repeat_at.retain(|cid, _| down.contains(cid));
+        self.ignored.retain(|cid| down.contains(cid));
         let t = now();
         for &(cid, lx, ly) in &touching {
             if self.config.test_pattern && !self.logged_contacts.contains(&cid) {
                 log(&format!("touch down id={cid} x={lx} y={ly}"));
             }
-            if self.owner.contains_key(&cid) {
+            if self.owner.contains_key(&cid) || self.ignored.contains(&cid) {
                 continue;
             }
             let layer = self.visible_layer();
-            let hit = self.widgets.iter().find(|w| w.layer == layer && self.widget_has_data(w) && w.kind != Kind::Spacer && w.hit(lx, ly));
-            if let Some(w) = hit {
-                let (key, repeats) = (w.key.clone(), w.repeats);
+            let hit = self.widgets.iter().find(|w| w.layer == layer && w.visible() && w.kind != WidgetKind::Spacer && w.hit(lx, ly));
+            if let Some(key) = hit.map(|w| w.key.clone()) {
                 self.owner.insert(cid, key.clone());
                 self.touch_x.insert(cid, lx);
-                self.press(&key, Some(lx));
-                if repeats {
-                    self.repeat_at.insert(cid, t + self.config.repeat_delay);
-                }
+                self.press(cid, &key, lx, t);
             }
         }
 
@@ -1625,6 +1564,7 @@ impl Renderer {
         if (after.1, &after.2) != (before.1, &before.2) || (self.config.debug_background && after.0 != before.0) {
             self.dirty = true;
         }
+        self.sync_view();
         if count > 0 {
             self.last_input = t;
             if self.dimmed {
@@ -1634,11 +1574,13 @@ impl Renderer {
         }
     }
 
+    /// Repeat held keys (backend actions repeat in the backend).
     fn run_repeats(&mut self, t: f64) {
         let due: Vec<(u8, f64)> = self.repeat_at.iter().filter(|(_, d)| t >= **d).map(|(c, d)| (*c, *d)).collect();
         for (cid, d) in due {
-            if let Some(key) = self.owner.get(&cid).cloned() {
-                self.press(&key, None);
+            let key = self.owner.get(&cid).and_then(|k| self.widget(k)).map(|w| w.action.clone());
+            if let Some(Action::Key { name, .. }) = key {
+                self.tap_key(&name);
             }
             self.repeat_at.insert(cid, (d + self.config.repeat_interval).max(t));
         }
@@ -1663,68 +1605,68 @@ impl Renderer {
         }
     }
 
+    /// `omarchy-glance touchbar`: drive the bar until killed. Losing the
+    /// backend or t1bridge reconnects instead of exiting, so t1bridge never
+    /// falls back to its built-in renderer.
     pub fn run(mut self) -> Result<(), String> {
-        self.handshake()?;
         let mut next_poll = 0.0;
         loop {
             let t = now();
+            if self.conn.is_none() && t >= self.hw_retry.0 {
+                self.connect_hw(t);
+            }
+            if self.link.is_none() && t >= self.backend_retry.0 {
+                self.connect_backend(t);
+            }
             if t >= next_poll {
-                self.poll_config();
-                self.refresh_usage(t);
-                self.poll_usage();
                 self.poll_theme();
                 let minute = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |d| d.as_secs() / 60);
                 if self.minute != Some(minute) {
                     // reset times and countdowns
                     self.minute = Some(minute);
-                    for w in self.widgets.iter().filter(|w| w.kind == Kind::Agents) {
+                    for w in self.widgets.iter().filter(|w| w.kind == WidgetKind::Agents) {
                         self.damage.insert(w.key.clone());
                     }
                 }
                 next_poll = t + POLL_SECONDS;
             }
-            self.run_commands(t);
-            self.sample_graphs(t);
-            self.update_mic(t);
-            self.update_media_watch(t);
+            if !self.synced && !self.offline && t >= self.offline_at {
+                self.offline = true;
+                self.dirty = true;
+            }
             self.run_repeats(t);
             let idle = self.config.idle_dim;
             if idle > 0.0 && !self.dimmed && t >= self.last_input + idle {
                 self.dimmed = true;
                 self.dirty = true;
             }
-            self.present()?;
+            if self.conn.is_some() && let Err(e) = self.present() {
+                self.lost_hw(now(), &e);
+            }
 
             let mut deadlines = vec![next_poll];
             deadlines.extend(self.repeat_at.values());
-            deadlines.extend(self.command_deadlines());
-            deadlines.extend(self.graphs.values().map(|g| g.next));
-            if let Some(m) = &self.mic {
-                deadlines.push(m.deadline());
-            }
-            if self.media_watch.is_none() && self.widgets.iter().any(|w| w.kind == Kind::Media) {
-                deadlines.push(self.media_watch_at);
-            }
             if idle > 0.0 && !self.dimmed {
                 deadlines.push(self.last_input + idle);
             }
+            if self.conn.is_none() {
+                deadlines.push(self.hw_retry.0);
+            }
+            if self.link.is_none() {
+                deadlines.push(self.backend_retry.0);
+            }
+            if !self.synced && !self.offline {
+                deadlines.push(self.offline_at);
+            }
             let timeout = (deadlines.iter().copied().fold(f64::INFINITY, f64::min) - now()).max(0.0);
 
-            let sock = self.conn.as_ref().ok_or("not connected")?.raw_fd();
-            let mut fds: Vec<(RawFd, Ready)> = vec![(sock, Ready::Sock)];
-            for (key, s) in &self.commands {
-                if let Some(out) = s.proc.as_ref().and_then(|p| p.stdout.as_ref()) {
-                    fds.push((out.as_raw_fd(), Ready::Command(key.clone())));
-                }
+            let hw = self.conn.as_ref().map(Conn::raw_fd);
+            let backend = self.link.as_ref().and_then(Link::fd);
+            let mut pfds: Vec<libc::pollfd> = vec![];
+            for (fd, write) in [(hw, false), (backend, self.link.as_ref().is_some_and(Link::wants_write))] {
+                let events = if write { libc::POLLIN | libc::POLLOUT } else { libc::POLLIN };
+                pfds.push(libc::pollfd { fd: fd.unwrap_or(-1), events, revents: 0 }); // poll skips -1
             }
-            if let Some(m) = &self.mic {
-                fds.extend(m.fds().into_iter().map(|(fd, which)| (fd, Ready::Mic(which))));
-            }
-            if let Some(out) = self.media_watch.as_ref().and_then(|p| p.stdout.as_ref()) {
-                fds.push((out.as_raw_fd(), Ready::Media));
-            }
-            let mut pfds: Vec<libc::pollfd> =
-                fds.iter().map(|(fd, _)| libc::pollfd { fd: *fd, events: libc::POLLIN, revents: 0 }).collect();
             let ms = (timeout * 1000.0).ceil().min(f64::from(i32::MAX)) as i32;
             let n = unsafe { libc::poll(pfds.as_mut_ptr(), pfds.len() as libc::nfds_t, ms) };
             if n < 0 {
@@ -1734,72 +1676,60 @@ impl Renderer {
                 }
                 return Err(format!("poll: {err}"));
             }
-            for (pfd, (_, ready)) in pfds.iter().zip(fds) {
-                if pfd.revents == 0 {
-                    continue;
+            if pfds[0].revents != 0 && let Some(conn) = self.conn.as_mut() {
+                match conn.recv() {
+                    Ok((mtype, req, payload)) => self.handle(mtype, req, &payload),
+                    Err(e) => self.lost_hw(now(), &e.to_string()),
                 }
-                match ready {
-                    Ready::Sock => {
-                        let conn = self.conn.as_mut().ok_or("not connected")?;
-                        let (mtype, req, payload) = conn.recv().map_err(|e| e.to_string())?;
-                        self.handle(mtype, req, &payload);
-                    }
-                    Ready::Command(key) => self.read_command(&key),
-                    Ready::Mic(which) => {
-                        if let Some(m) = self.mic.as_mut() {
-                            m.readable(which);
-                        }
-                    }
-                    Ready::Media => self.read_media_watch(),
-                }
+            }
+            if pfds[1].revents & libc::POLLOUT != 0 && let Some(link) = self.link.as_mut() && let Err(e) = link.flush() {
+                self.lost_backend(now(), &e);
+            }
+            if pfds[1].revents & (libc::POLLIN | libc::POLLHUP | libc::POLLERR) != 0 {
+                self.pull();
             }
         }
     }
 }
 
-impl Renderer {
-    /// Draw one frame of the configured bar to a PNG without the hardware:
-    /// samples the graphs twice a second apart and waits for command widgets.
-    pub fn preview(mut self, path: &str, fn_layer: bool) -> Result<(), String> {
-        self.set_geometry(2170, 60);
-        self.fn_held = fn_layer;
-        self.poll_config();
-        self.poll_usage();
-        self.poll_theme();
-        for _ in 0..2 {
-            let t = now();
-            for g in self.graphs.values_mut() {
-                g.next = 0.0;
-            }
-            self.sample_graphs(t);
-            self.update_mic(t);
-            self.run_commands(t);
-            let keys: Vec<String> = self.commands.iter().filter(|(_, s)| s.proc.is_some()).map(|(k, _)| k.clone()).collect();
-            for key in keys {
-                while self.commands[&key].proc.is_some() {
-                    self.read_command(&key);
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_secs(1));
+/// `omarchy-glance preview out.png [fn]`: draw one frame of the configured bar
+/// to a PNG without the hardware, from a backend in this process that samples
+/// the graphs twice a second apart and waits for command widgets.
+pub fn preview(path: &str, fn_layer: bool) -> Result<(), String> {
+    let mut backend = Box::new(Backend::new(Paths::user()));
+    let session = backend.connect();
+    let mut r = Renderer::new(Some(Link::Local { backend, session }));
+    r.set_geometry(2170, 60);
+    r.fn_held = fn_layer;
+    r.poll_theme();
+    r.request(json!({"type": "hello", "protocol": protocol::PROTOCOL, "output": "touchbar", "client": CLIENT}));
+    let start = now();
+    loop {
+        r.pull();
+        let Some(Link::Local { backend, .. }) = r.link.as_mut() else { unreachable!() };
+        let t = now() - start;
+        if (t >= 1.05 && !backend.busy()) || t >= 12.0 {
+            break;
         }
-        if let Some(mut m) = self.mic.take() {
-            m.close();
-            self.mic = Some(m);
-        }
-        let surface = ImageSurface::create(Format::Rgb24, self.w, self.h).map_err(|e| e.to_string())?;
-        self.draw(&surface, None);
-        let mut file = fs::File::create(path).map_err(|e| e.to_string())?;
-        surface.write_to_png(&mut file).map_err(|e| e.to_string())
+        backend.pump(0.05);
     }
+    std::thread::sleep(std::time::Duration::from_millis(20)); // past the update coalescing
+    r.pull();
+    if let Some(Link::Local { backend, .. }) = r.link.as_mut() {
+        backend.shutdown();
+    }
+    if !r.synced {
+        return Err("the backend sent no snapshot".into());
+    }
+    let surface = ImageSurface::create(Format::Rgb24, r.w, r.h).map_err(|e| e.to_string())?;
+    r.draw(&surface, None);
+    let mut file = fs::File::create(path).map_err(|e| e.to_string())?;
+    surface.write_to_png(&mut file).map_err(|e| e.to_string())
 }
 
 // --- free helpers ------------------------------------------------------------
 fn extents(cr: &Context, t: &str) -> TextExtents {
     cr.text_extents(t).unwrap_or_else(|_| TextExtents::new(0.0, 0.0, 0.0, 0.0, 0.0, 0.0))
-}
-
-fn kind_is_mirrored(kind: sources::Kind) -> bool {
-    matches!(kind, sources::Kind::Network | sources::Kind::Disk)
 }
 
 fn dot_style(s: &Spec) -> DotStyle {
@@ -1883,60 +1813,4 @@ fn reset_widest(w: &Widget) -> String {
 mod golden;
 
 #[cfg(test)]
-mod agent_visibility_tests {
-    use super::*;
-    use serde_json::json;
-
-    #[test]
-    fn matches_panel_data_rules() {
-        assert!(!provider_has_data(&json!({"id":"codex", "ready":true})));
-        assert!(!provider_has_data(&json!({"id":"codex", "recentDays":[{}], "totalPrompts":0})));
-        for key in ["totalPrompts", "totalSessions", "activeDays", "todayPrompts", "todaySessions"] {
-            let mut record = json!({"id":"codex", "ready":false});
-            record[key] = json!(1);
-            assert!(provider_has_data(&record), "{key}");
-        }
-        assert!(provider_has_data(&json!({"id":"codex", "limits":[{"percent":0}]})));
-        assert!(provider_has_data(&json!({"id":"codex", "balance":{"remaining":0}})));
-        assert!(!provider_has_data(&json!({"id":"codex", "balance":{"remaining":-1}})));
-        assert!(!provider_has_data(&json!({"limits":[{}]})));
-    }
-
-    #[test]
-    fn records_appear_disappear_and_reclaim_space() {
-        let directory = std::env::temp_dir().join(format!("omarchy-glance-visibility-{}", std::process::id()));
-        fs::create_dir_all(&directory).unwrap();
-        let path = directory.join("codex.json");
-        let mut renderer = Renderer::new(None);
-        renderer.config = Rc::new(Config::parse(r#"{"version":1,"layers":{"default":{"right":[
-            {"id":"glance.agents","agent":"codex","layout":"stacked"},
-            {"id":"glance.esc"}
-        ]}}}"#).unwrap());
-        renderer.set_geometry(2170, 60);
-        renderer.build();
-        renderer.poll_usage_at(&directory);
-        assert_eq!(renderer.width_of(&renderer.widgets[0]), 0);
-        let esc_rect = renderer.widgets[1].rect;
-        for record in [json!({"id":"codex","limits":[{"label":"5h window","percent":0}]}),
-                       json!({"id":"codex","totalSessions":1})] {
-            fs::write(&path, record.to_string()).unwrap();
-            renderer.poll_usage_at(&directory);
-            assert!(renderer.width_of(&renderer.widgets[0]) > 0);
-            assert_eq!(renderer.widgets[1].rect, esc_rect);
-            renderer.owner.insert(1, renderer.widgets[0].key.clone());
-            fs::remove_file(&path).unwrap();
-            renderer.poll_usage_at(&directory);
-            assert_eq!(renderer.width_of(&renderer.widgets[0]), 0);
-            assert!(renderer.owner.is_empty());
-        }
-        fs::write(&path, "broken JSON").unwrap();
-        renderer.poll_usage_at(&directory);
-        assert_eq!(renderer.width_of(&renderer.widgets[0]), 0);
-        fs::remove_file(&path).unwrap();
-        renderer.poll_usage_at(&directory);
-        fs::write(&path, r#"{"id":"codex","ready":true,"limits":[]}"#).unwrap();
-        renderer.poll_usage_at(&directory);
-        assert_eq!(renderer.width_of(&renderer.widgets[0]), 0);
-        fs::remove_dir_all(directory).unwrap();
-    }
-}
+mod tests;

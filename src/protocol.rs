@@ -81,6 +81,11 @@ pub enum WidgetKind {
 }
 
 impl WidgetKind {
+    pub fn parse(name: &str) -> Option<WidgetKind> {
+        [WidgetKind::Esc, WidgetKind::Button, WidgetKind::Command, WidgetKind::Agents, WidgetKind::Graph,
+         WidgetKind::Mic, WidgetKind::Media, WidgetKind::Spacer].into_iter().find(|k| k.name() == name)
+    }
+
     pub fn name(self) -> &'static str {
         match self {
             WidgetKind::Esc => "esc",

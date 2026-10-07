@@ -30,7 +30,7 @@ const MIC_LEVELS: usize = 64; // newest levels sent to clients
 pub fn usage_dir() -> PathBuf {
     std::env::var_os("XDG_STATE_HOME")
         .filter(|v| !v.is_empty())
-        .map_or_else(|| crate::renderer::home().join(".local/state"), PathBuf::from)
+        .map_or_else(|| crate::config::home().join(".local/state"), PathBuf::from)
         .join("omarchy/agents/usage")
 }
 
@@ -165,6 +165,11 @@ impl Command {
     pub fn state(&self) -> Value {
         json!({"text": self.text, "urgent": self.urgent})
     }
+
+    #[cfg(test)]
+    pub fn fixture(&mut self, text: &str, urgent: bool) {
+        (self.text, self.urgent) = (text.into(), urgent);
+    }
 }
 
 // --- media -----------------------------------------------------------------
@@ -241,6 +246,11 @@ impl Media {
         self.state.clone()
     }
 
+    #[cfg(test)]
+    pub fn fixture(&mut self, state: Value) {
+        self.state = state;
+    }
+
     pub fn stop(&mut self) {
         self.status.stop();
         if let Some(p) = self.watch.take() {
@@ -312,6 +322,11 @@ impl Usage {
         }
     }
 
+    #[cfg(test)]
+    pub fn fixture(&mut self, record: Option<Value>) {
+        self.record = record;
+    }
+
     pub fn visible(&self) -> bool {
         self.record.as_ref().is_some_and(provider_has_data)
     }
@@ -378,6 +393,17 @@ impl Graph {
                 h.pop_front();
             }
         }
+    }
+
+    /// Fixed history (oldest first; only the newest that fit are kept) and
+    /// source output.
+    #[cfg(test)]
+    pub fn fixture(&mut self, history: Vec<Vec<f64>>, lines: sources::Lines, cores: Vec<f64>, battery: Option<(i64, String)>) {
+        for (h, values) in self.history.iter_mut().zip(history) {
+            h.clear();
+            h.extend(&values[values.len().saturating_sub(self.columns)..]);
+        }
+        (self.source.lines, self.source.cores, self.source.battery) = (lines, cores, battery);
     }
 
     /// Take a sample if one is due; true if it did.

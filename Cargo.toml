@@ -7,4 +7,4 @@ edition = "2024"
 cairo-rs = { version = "0.22", features = ["png"] }
 chrono = "0.4.45"
 libc = "0.2.190"
-serde_json = "1.0.151"
+serde_json = { version = "1.0.151", features = ["float_roundtrip"] }

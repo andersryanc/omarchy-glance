@@ -204,7 +204,7 @@ fn hold_to_repeat_and_cancel() {
     b.handle_line(id, &json!({"type":"press","id":2,"generation":generation,"widget":"default.left.0","pointer":3}).to_string(), t0);
     b.tick(t0 + 0.39);
     b.tick(t0 + 0.40); // first repeat
-    b.tick(t0 + 0.52); // second
+    b.tick(t0 + 0.53); // second (0.4 + 0.12 can round past 0.52)
     b.handle_line(id, r#"{"type":"release","id":3,"pointer":3}"#, t0 + 0.6);
     b.tick(t0 + 1.0);
     assert_eq!(wait_for_lines(&log, 3), 3);

@@ -101,9 +101,13 @@ QML.
 mounts it at startup once enabled. `Panel.qml` puts a `PanelWindow`
 (namespace `omarchy-glance`, top layer, no keyboard focus, its own exclusive
 zone) at the top of each screen, `Style.bar.sizeHorizontal` (26 px) high, and
-remaps itself whenever Hyprland reports `openlayer>>omarchy-bar` (a scale
-change recreates the bar's windows, which would otherwise stack below the
-row), and fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
+keeps itself mapped after the bar (Hyprland stacks exclusive zones in map
+order, and a scale or monitor change recreates the bar's windows): it hides
+on `closelayer>>omarchy-bar` and maps again 16 ms after
+`openlayer>>omarchy-bar`, or after 2 s if the bar doesn't come back. Polling
+`hyprctl layers` during a scale change shows the row at the top for one poll
+(about 20 ms) before it hides, and absent for about 100 ms while the bar is
+recreated; the wrong order is never shown otherwise. It fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
 bar's font. Until T08 it shows the Touch Bar config. Install from the
 checkout:
 

@@ -34,18 +34,26 @@ Item {
     fontSize: Style.font.body
   }
 
-  // Hyprland stacks exclusive zones in map order. When the bar maps again
-  // after us (a scale or monitor change recreates its windows), our row
-  // ends up above it; unmapping and remapping puts it back underneath.
+  // Hyprland stacks exclusive zones in map order, so the row must map after
+  // the bar. A scale or monitor change recreates the bar's windows: hide the
+  // row as soon as the bar closes and map it again right after the bar
+  // reopens, so the wrong order is never on screen.
   property bool mapped: true
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (event.name === "openlayer" && event.data === "omarchy-bar") remap.restart()
+      if (event.data !== "omarchy-bar") return
+      if (event.name === "closelayer") {
+        root.mapped = false
+        fallback.restart()
+      } else if (event.name === "openlayer") {
+        root.mapped = false // a no-op unless the bar opened while the row was up
+        show.restart()
+      }
     }
   }
-  Timer { id: remap; interval: 50; onTriggered: { root.mapped = false; show.restart() } }
-  Timer { id: show; interval: 50; onTriggered: root.mapped = true }
+  Timer { id: show; interval: 16; onTriggered: { fallback.stop(); root.mapped = true } }
+  Timer { id: fallback; interval: 2000; onTriggered: root.mapped = true } // the bar didn't come back
 
   Variants {
     model: Quickshell.screens

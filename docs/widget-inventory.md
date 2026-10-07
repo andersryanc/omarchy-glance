@@ -20,6 +20,7 @@ and "client" refer to the split in
 | `glance.esc` | TB | none | none | Esc through t1bridge `TapKeys` |
 | `type: button` with `key` | TB | none | none | Esc/F1–F12 through `TapKeys`, repeats while held |
 | `type: button` with `exec` | TB, D | none | `exec`, hold-to-repeat | none |
+| `glance.volume-down`, `.volume-up`, `.mute` | TB, D | none | `exec` buttons with a built-in icon and command | none |
 | `type: command` | TB, D | `exec` script output, every `interval` s | `onTap` | none |
 | `glance.agents` | TB, D | Omarchy usage records, refresh job per provider | `onTap` (default: toggle the Omarchy agents panel) | none |
 | `glance.cpu`, `.memory`, `.gpu`, `.network`, `.disk`, `.battery`, `.fan` | TB, D | `/proc` and `/sys` samples every `interval` s | `onTap` (default: open btop) | none |

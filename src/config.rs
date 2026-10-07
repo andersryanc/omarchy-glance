@@ -131,13 +131,35 @@ pub struct Desktop {
 
 pub const DESKTOP_COLORS: [&str; 5] = ["background", "foreground", "accent", "urgent", "muted"];
 
+/// Built-in buttons: id, icon, command, repeat while held.
+const PRESETS: [(&str, &str, &str, bool); 3] = [
+    ("glance.volume-down", "\u{f027}", "omarchy-audio-output-volume lower", true),
+    ("glance.volume-up", "\u{f028}", "omarchy-audio-output-volume raise", true),
+    ("glance.mute", "\u{eee8}", "omarchy-audio-output-volume mute-toggle", false),
+];
+
+/// A built-in button's config: its preset with the widget's own options on
+/// top. A `label` replaces the icon.
+fn with_preset(mut spec: Spec) -> Spec {
+    let id = spec.get("id").and_then(Value::as_str).unwrap_or("");
+    if let Some((_, icon, exec, repeat)) = PRESETS.iter().find(|p| p.0 == id) {
+        spec.entry("type").or_insert_with(|| "button".into());
+        if !spec.contains_key("label") {
+            spec.entry("icon").or_insert_with(|| (*icon).into());
+        }
+        spec.entry("exec").or_insert_with(|| (*exec).into());
+        spec.entry("repeat").or_insert_with(|| (*repeat).into());
+    }
+    spec
+}
+
 fn sections(obj: &Spec, at: &str) -> Result<Vec<(&'static str, Vec<Spec>)>, String> {
     let mut out = vec![];
     for section in SECTIONS {
         let items = match obj.get(section) {
             None | Some(Value::Null) => vec![],
             Some(Value::Array(a)) if a.iter().all(Value::is_object) => {
-                a.iter().map(|i| i.as_object().unwrap().clone()).collect()
+                a.iter().map(|i| with_preset(i.as_object().unwrap().clone())).collect()
             }
             Some(_) => return Err(format!(r#""{at}{section}" must be a list of objects"#)),
         };

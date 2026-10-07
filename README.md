@@ -165,7 +165,7 @@ renderer logs why (`omarchy-glance log`) and keeps the previous config.
     "fn": {
       "left": [
         { "id": "glance.esc" },
-        { "id": "volume-up", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume raise", "repeat": true }
+        { "id": "glance.volume-up" }
       ]
     }
   }
@@ -199,6 +199,7 @@ inventory is in [docs/widget-inventory.md](docs/widget-inventory.md).
 | `glance.media` | TB, D | Previous, play/pause and next keys and the current track. See [Media](#media). |
 | `glance.cpu`, `.memory`, `.gpu`, `.network`, `.disk`, `.battery`, `.fan` | TB, D | A label, a btop-style dot graph of recent history, and the current value. See [Graphs](#graphs). |
 | `glance.spacer` | TB, D | `size` (40). Empty space. |
+| `glance.volume-down`, `.volume-up`, `.mute` | TB, D | Buttons with their icon and Omarchy's volume command; volume repeats while held. Any button option overrides the preset (`label` replaces the icon). |
 | `"type": "button"` | TB, D (`key`: TB only) | `icon` (Nerd Font glyph) or `label` (text), `iconSize` (30), `fontSize` (18), `width` (140); then either `exec` (shell command) or `key` (`"esc"`, `"f1"`…`"f12"`), and `repeat` (`true` repeats while held). |
 | `"type": "command"` | TB, D | `exec` (shell command whose output is shown), `interval` (seconds; omit to run once), `onTap` (shell command), `fontSize` (18), `width` (sized to the text when omitted). |
 

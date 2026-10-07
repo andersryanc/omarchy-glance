@@ -36,9 +36,9 @@
         { "id": "brightness-down", "type": "button", "icon": "󰃞", "iconSize": 20, "exec": "omarchy-brightness-display 5%-", "repeat": true },
         { "id": "brightness-up", "type": "button", "icon": "󰃞", "iconSize": 32, "exec": "omarchy-brightness-display +5%", "repeat": true },
         { "id": "glance.spacer", "size": 40 },
-        { "id": "mute", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume mute-toggle" },
-        { "id": "volume-down", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume lower", "repeat": true },
-        { "id": "volume-up", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume raise", "repeat": true }
+        { "id": "glance.mute" },
+        { "id": "glance.volume-down" },
+        { "id": "glance.volume-up" }
       ],
       "right": [
         { "id": "glance.mic" }

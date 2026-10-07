@@ -249,11 +249,11 @@ fn config_reload_sends_snapshot_and_ends_presses() {
     b.tick(t0 + 3.0);
     assert_eq!(wait_for_lines(&log, 2), 1, "no repeats after the reload");
 
-    // An invalid file keeps the previous config and reports the error.
+    // An invalid file keeps the previous config and reports the error in a
+    // snapshot of its own, without a resync.
     std::thread::sleep(Duration::from_millis(20));
     fs::write(dir.0.join("touchbar.json"), "{ nope").unwrap();
     b.tick(t0 + 4.5);
-    b.handle_line(id, r#"{"type":"resync","id":3}"#, t0 + 4.5);
     let msgs = parse(b.drain(id, t0 + 4.5));
     let snapshot = msgs.iter().find(|m| m["type"] == "snapshot").unwrap();
     assert_eq!(snapshot["config"]["generation"], generation + 1);

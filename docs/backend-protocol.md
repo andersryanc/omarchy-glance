@@ -122,7 +122,9 @@ The backend answers with `ack`, then `welcome`, then a `snapshot`:
 ### Snapshot
 
 A snapshot is the complete state for the client's output. It's sent after
-`hello`, after every config reload, after a `resync` request, and when the
+`hello`, after every config reload (also a failed one, which keeps the
+config and generation but sets `config.error`), after a `resync` request,
+and when the
 backend replaces an overflowing update queue.
 
 ```json
@@ -282,7 +284,8 @@ everything before it. There's no ordering between connections.
   reconnects after 0.1 s, doubling to at most 2 s. Socket activation restarts
   the backend if needed.
 - **Config reload:** a new generation and a snapshot to each session of that
-  output. Presses against the old generation get `stale_config`.
+  output. Presses against the old generation get `stale_config`. A file
+  that doesn't parse keeps the generation; the snapshot carries the error.
 
 ## Worked examples
 

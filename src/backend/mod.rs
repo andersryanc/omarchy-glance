@@ -570,6 +570,11 @@ impl Backend {
                 if let Some(p) = self.outputs.get_mut(&output) {
                     p.source = source;
                     p.error = Some(e);
+                    // Same config and generation, but clients show the error.
+                    let ids: Vec<u64> = self.sessions.iter().filter(|(_, s)| s.output == Some(output)).map(|(id, _)| *id).collect();
+                    for id in ids {
+                        self.queue_snapshot(id);
+                    }
                     return;
                 }
                 (output.parse_config(default).expect("built-in config"), Some(e), format!("<built-in {default_name}>"))

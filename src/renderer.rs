@@ -22,7 +22,7 @@ use crate::proto::{self, Buffer, Conn, Packer, le_u32, le_u64};
 use crate::sources::{self, Source};
 use crate::{log, now};
 
-const DEFAULT_CONFIG: &str = include_str!("../config.default.json");
+pub const DEFAULT_CONFIG: &str = include_str!("../touchbar.default.json");
 const POLL_SECONDS: f64 = 1.0; // how often to check the config and usage files
 
 // --- hardware facts and widget metrics ---------------------------------------
@@ -89,11 +89,11 @@ fn home() -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }
 
-fn user_config() -> PathBuf {
+pub fn user_config() -> PathBuf {
     std::env::var_os("XDG_CONFIG_HOME")
         .filter(|v| !v.is_empty())
         .map_or_else(|| home().join(".config"), PathBuf::from)
-        .join("touchbar/config.json")
+        .join("omarchy-glance/touchbar.json")
 }
 
 fn mtime(path: &PathBuf) -> Option<SystemTime> {
@@ -163,11 +163,11 @@ fn kind_of(spec: &Spec) -> Option<Kind> {
         return Some(Kind::Graph);
     }
     Some(match id {
-        "touchbar.esc" => Kind::Esc,
-        "touchbar.agents" => Kind::Agents,
-        "touchbar.mic" => Kind::Mic,
-        "touchbar.media" => Kind::Media,
-        "touchbar.spacer" => Kind::Spacer,
+        "glance.esc" => Kind::Esc,
+        "glance.agents" => Kind::Agents,
+        "glance.mic" => Kind::Mic,
+        "glance.media" => Kind::Media,
+        "glance.spacer" => Kind::Spacer,
         _ => return None,
     })
 }
@@ -259,7 +259,7 @@ pub struct Renderer {
     widgets: Vec<Widget>,
     owner: HashMap<u8, String>, // contact id -> key of the widget it first touched
     touch_x: HashMap<u8, i32>,  // contact id -> x where it first touched
-    mic: Option<Mic>,           // while a touchbar.mic widget exists
+    mic: Option<Mic>,           // while a glance.mic widget exists
     media_watch: Option<Child>, // dbus-monitor for player changes, while a media widget exists
     media_watch_at: f64,        // earliest (re)start
     minute: Option<u64>,        // wall-clock minute, for reset times
@@ -381,7 +381,7 @@ impl Renderer {
     // --- config -------------------------------------------------------------
     fn poll_config(&mut self) {
         let user = user_config();
-        let path = if user.exists() { user } else { PathBuf::from("<built-in config.default.json>") };
+        let path = if user.exists() { user } else { PathBuf::from("<built-in touchbar.default.json>") };
         let source = (path.clone(), mtime(&path));
         if self.config_source.as_ref() == Some(&source) {
             return;
@@ -1920,13 +1920,13 @@ mod agent_visibility_tests {
 
     #[test]
     fn records_appear_disappear_and_reclaim_space() {
-        let directory = std::env::temp_dir().join(format!("touchbar-visibility-{}", std::process::id()));
+        let directory = std::env::temp_dir().join(format!("omarchy-glance-visibility-{}", std::process::id()));
         fs::create_dir_all(&directory).unwrap();
         let path = directory.join("codex.json");
         let mut renderer = Renderer::new(None);
         renderer.config = Rc::new(Config::parse(r#"{"version":1,"layers":{"default":{"right":[
-            {"id":"touchbar.agents","agent":"codex","layout":"stacked"},
-            {"id":"touchbar.esc"}
+            {"id":"glance.agents","agent":"codex","layout":"stacked"},
+            {"id":"glance.esc"}
         ]}}}"#).unwrap());
         renderer.set_geometry(2170, 60);
         renderer.build();

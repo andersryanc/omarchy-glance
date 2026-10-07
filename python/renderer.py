@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """Custom Touch Bar renderer for t1bridge (Touch Bar hardware IPC v1).
 
-The bar is built from ~/.config/touchbar/config.json (or ../config.default.json
+The bar is built from ~/.config/omarchy-glance/touchbar.json (or ../touchbar.default.json
 in the repo root when there is none) and reloads when that file changes.
 A config has two layers, "default" and "fn" (shown while Fn is held), each
 with left/center/right lists of widgets, like the Omarchy bar's shell.json.
 See README.md for the format.
 
-Spec: ~/Work/touchbar/docs/t1bridge-interfaces.md
+Spec: ~/Work/omarchy-glance/docs/t1bridge-interfaces.md
 """
 
 import array
@@ -31,9 +31,9 @@ from sources import SOURCES
 
 SOCK_PATH = "/run/t1bridge/touchbar.sock"
 HERE = os.path.dirname(os.path.realpath(__file__))
-DEFAULT_CONFIG = os.path.join(HERE, "..", "config.default.json")
+DEFAULT_CONFIG = os.path.join(HERE, "..", "touchbar.default.json")
 USER_CONFIG = os.path.join(os.environ.get("XDG_CONFIG_HOME") or os.path.expanduser("~/.config"),
-                           "touchbar", "config.json")
+                           "omarchy-glance", "touchbar.json")
 POLL_SECONDS = 1                 # how often to check the config and usage files
 
 # --- protocol constants -----------------------------------------------------
@@ -103,7 +103,7 @@ GLYPHS = {
 
 
 def log(*args):
-    print("touchbar-renderer:", *args, file=sys.stderr, flush=True)
+    print("omarchy-glance:", *args, file=sys.stderr, flush=True)
 
 
 def hex_rgb(value, fallback):
@@ -210,7 +210,7 @@ class Renderer:
         self.widgets = []
         self.owner = {}              # contact id -> Widget it first touched
         self.touch_x = {}            # contact id -> x where it first touched
-        self.mic = None              # Mic, while a touchbar.mic widget exists
+        self.mic = None              # Mic, while a glance.mic widget exists
         self.media_watch = None      # dbus-monitor for player changes, while a media widget exists
         self.media_watch_at = 0.0    # earliest (re)start
         self.minute = None           # wall-clock minute, for reset times
@@ -365,8 +365,8 @@ class Renderer:
             return t
         if spec.get("id") in SOURCES:
             return "graph"
-        return {"touchbar.esc": "esc", "touchbar.agents": "agents", "touchbar.mic": "mic",
-                "touchbar.media": "media", "touchbar.spacer": "spacer"}.get(spec.get("id"))
+        return {"glance.esc": "esc", "glance.agents": "agents", "glance.mic": "mic",
+                "glance.media": "media", "glance.spacer": "spacer"}.get(spec.get("id"))
 
     def place(self, widgets, section):
         widths = [self.width_of(w) for w in widgets]

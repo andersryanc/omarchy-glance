@@ -21,27 +21,27 @@
   "layers": {
     "default": {
       "left": [
-        { "id": "touchbar.esc" },
-        { "id": "touchbar.media" }
+        { "id": "glance.esc" },
+        { "id": "glance.media" }
       ],
       "right": [
-        { "id": "touchbar.cpu" },
-        { "id": "touchbar.memory" },
-        { "id": "touchbar.agents", "agent": "claude" }
+        { "id": "glance.cpu" },
+        { "id": "glance.memory" },
+        { "id": "glance.agents", "agent": "claude" }
       ]
     },
     "fn": {
       "left": [
-        { "id": "touchbar.esc" },
+        { "id": "glance.esc" },
         { "id": "brightness-down", "type": "button", "icon": "󰃞", "iconSize": 20, "exec": "omarchy-brightness-display 5%-", "repeat": true },
         { "id": "brightness-up", "type": "button", "icon": "󰃞", "iconSize": 32, "exec": "omarchy-brightness-display +5%", "repeat": true },
-        { "id": "touchbar.spacer", "size": 40 },
+        { "id": "glance.spacer", "size": 40 },
         { "id": "mute", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume mute-toggle" },
         { "id": "volume-down", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume lower", "repeat": true },
         { "id": "volume-up", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume raise", "repeat": true }
       ],
       "right": [
-        { "id": "touchbar.mic" }
+        { "id": "glance.mic" }
       ]
     }
   }

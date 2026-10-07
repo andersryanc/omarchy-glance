@@ -1,4 +1,4 @@
-"""Data sources for the graph widgets (touchbar.cpu, touchbar.network, ...).
+"""Data sources for the graph widgets (glance.cpu, glance.network, ...).
 
 Each source reads the system once per sample. `sample()` returns one raw value
 per series (or None while it has nothing to show yet) and sets `lines`, the
@@ -391,11 +391,11 @@ class Fan(Source):
 
 
 SOURCES = {
-    "touchbar.cpu": Cpu,
-    "touchbar.memory": Memory,
-    "touchbar.gpu": Gpu,
-    "touchbar.network": Network,
-    "touchbar.disk": Disk,
-    "touchbar.battery": Battery,
-    "touchbar.fan": Fan,
+    "glance.cpu": Cpu,
+    "glance.memory": Memory,
+    "glance.gpu": Gpu,
+    "glance.network": Network,
+    "glance.disk": Disk,
+    "glance.battery": Battery,
+    "glance.fan": Fan,
 }

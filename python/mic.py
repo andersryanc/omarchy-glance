@@ -1,4 +1,4 @@
-"""Microphone state for the touchbar.mic widget.
+"""Microphone state for the glance.mic widget.
 
 Tracks whether the default source is muted and whether any other app is
 recording from it, by listening to `pactl subscribe` and re-reading PulseAudio
@@ -133,7 +133,7 @@ class Mic:
         try:
             self.rec = self.popen(["parec", "--raw", "--format=s16le", f"--rate={RATE}",
                                    "--channels=1", "--latency-msec=20", f"--device={device}",
-                                   "--client-name=touchbar", "--stream-name=Touch Bar level meter"])
+                                   "--client-name=omarchy-glance", "--stream-name=Touch Bar level meter"])
             self.pcm = b""
         except OSError as e:
             self.log(f"mic: could not run parec: {e}")

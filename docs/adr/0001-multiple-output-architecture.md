@@ -1,6 +1,6 @@
 # ADR 0001: Backend service with Touch Bar and desktop clients
 
-- Status: Accepted; implementation pending
+- Status: Accepted; rename (R01) done, backend split pending
 - Date: 2026-10-06 (revised the same day after review)
 
 ## Context
@@ -149,8 +149,8 @@ cheaper. Document framing, ordering, errors, and version compatibility in
   Bar client, `backend` runs the service, and `preview` runs both in one
   process to draw a PNG. t1bridge starts its renderer with no arguments, so
   `~/.config/t1bridge/renderer` is a small installed wrapper that runs
-  `omarchy-glance touchbar`. Control commands (on/off/status/log/config, from
-  today's `touchbar-custom`) become subcommands of the same binary.
+  `omarchy-glance touchbar`. Control commands (on/off/restart/status/log/config)
+  are subcommands of the same binary (since R01).
 - The Touch Bar client must not exit on recoverable errors. Exiting hands the
   bar to t1bridge's built-in renderer for the rest of the session. It reconnects
   to the backend and to the t1bridge socket instead, and shows a clear
@@ -163,7 +163,7 @@ cheaper. Document framing, ordering, errors, and version compatibility in
 
 Each output has its own file in `~/.config/omarchy-glance/`:
 
-- `touchbar.json`: today's `config.json` format, unchanged (`version`,
+- `touchbar.json`: the existing Touch Bar format, unchanged (`version`,
   `layers.default` and `layers.fn`, `colors`, `font`, `idleDimSeconds`,
   repeat timings, `debug`).
 - `desktop.json`: the same `version` and section shape, but a single widget
@@ -237,8 +237,9 @@ remains future work and is not a prerequisite.
 - The protocol is exercised by the Touch Bar before any desktop code exists,
   which tests its completeness early.
 - Installation must work without t1bridge and without a checkout at a fixed
-  path. Today `touchbar-custom` hardcodes the checkout location.
-- Python is removed, so `config.default.json` and docs no longer need to stay
+  path. Today only `omarchy-glance on python` depends on the checkout (the
+  path is compiled in), and that goes with Python in T05.
+- Python is removed, so `touchbar.default.json` and docs no longer need to stay
   compatible with it.
 - Media seeking needs position/duration support beyond `omarchy-shell media
   status`. Notifications need integration with the existing service; the

@@ -1,4 +1,4 @@
-# Touch Bar renderer
+# omarchy-glance
 
 A custom renderer for the MacBook Pro T1 Touch Bar, driven through
 [t1bridge](https://github.com/standardagents/t1bridge)'s Touch Bar hardware IPC
@@ -24,21 +24,25 @@ To check a change without the hardware, draw one frame to a PNG (`fn` shows
 the Fn layer):
 
 ```
-target/release/touchbar --preview /tmp/bar.png [fn]
+target/release/omarchy-glance --preview /tmp/bar.png [fn]
 ```
 
 ## Switching renderers
 
 ```
-touchbar-custom on            # use the Rust renderer (target/release/touchbar)
-touchbar-custom on python     # use python/renderer.py instead
-touchbar-custom off           # back to the t1bridge built-in bar
-touchbar-custom restart       # restart after rebuilding or editing
-touchbar-custom status        # which renderer is selected and running
-touchbar-custom log           # follow the renderer's log
-touchbar-custom config        # create ~/.config/touchbar/config.json if missing, print its path
-touchbar-custom config edit   # ... and open it in $EDITOR
+omarchy-glance on            # use the Rust renderer (this binary)
+omarchy-glance on python     # use python/renderer.py instead
+omarchy-glance off           # back to the t1bridge built-in bar
+omarchy-glance restart       # restart after rebuilding or editing
+omarchy-glance status        # which renderer is selected and running
+omarchy-glance log           # follow the renderer's log
+omarchy-glance config        # create ~/.config/omarchy-glance/touchbar.json if missing, print its path
+omarchy-glance config edit   # ... and open it in $EDITOR
 ```
+
+Link the binary onto your `PATH` once
+(`ln -s "$PWD/target/release/omarchy-glance" ~/.local/bin/`). With no
+arguments it drives the Touch Bar, which is how t1bridge starts it.
 
 `on` points `~/.config/t1bridge/renderer` at the chosen renderer and restarts
 the `t1-touchbar` user service. If the renderer exits, t1bridge falls back to
@@ -53,36 +57,35 @@ machines without a Touch Bar) is documented in
 
 | Path | |
 |---|---|
-| `src/` | Rust renderer: `main.rs` (entry, `--preview`), `proto.rs` (IPC, memfd buffers), `config.rs`, `renderer.rs` (widgets, layout, drawing, input, event loop), `sources.rs` (graph data), `mic.rs`, `proc.rs` (child processes). |
+| `src/` | Rust renderer: `main.rs` (entry, `--preview`), `cli.rs` (control subcommands), `proto.rs` (IPC, memfd buffers), `config.rs`, `renderer.rs` (widgets, layout, drawing, input, event loop), `sources.rs` (graph data), `mic.rs`, `proc.rs` (child processes). |
 | `python/` | Python renderer: `renderer.py`, `sources.py`, `mic.py`. |
-| `config.default.json` | The default config, shared: compiled into the Rust binary, read by Python. |
-| `touchbar-custom` | The switch script (linked from `~/.local/bin`). |
+| `touchbar.default.json` | The default Touch Bar config, shared: compiled into the Rust binary, read by Python. |
 | `docs/` | t1bridge's IPC spec and README, the nohzafk T1 notes, the T1's USB descriptors. |
 | `tools/` | Hardware experiments, e.g. `cutoff_test.py` (the 2060 px limit). |
 | `TODO.md` | Backlog. |
 
 ## Configuration
 
-The renderer reads `~/.config/touchbar/config.json`, or `config.default.json`
+The renderer reads `~/.config/omarchy-glance/touchbar.json`, or `touchbar.default.json`
 in this directory when that file doesn't exist. As with the Omarchy bar's
 `shell.json`, your file replaces the default entirely (no merging); start from
-a copy with `touchbar-custom config`.
+a copy with `omarchy-glance config`.
 
 The file is reloaded within a second of being saved. If it doesn't parse, the
-renderer logs why (`touchbar-custom log`) and keeps the previous config.
+renderer logs why (`omarchy-glance log`) and keeps the previous config.
 
 ```json
 {
   "version": 1,
   "layers": {
     "default": {
-      "left":   [{ "id": "touchbar.esc" }],
+      "left":   [{ "id": "glance.esc" }],
       "center": [],
-      "right":  [{ "id": "touchbar.agents", "agent": "claude" }]
+      "right":  [{ "id": "glance.agents", "agent": "claude" }]
     },
     "fn": {
       "left": [
-        { "id": "touchbar.esc" },
+        { "id": "glance.esc" },
         { "id": "volume-up", "type": "button", "icon": "", "exec": "omarchy-audio-output-volume raise", "repeat": true }
       ]
     }
@@ -101,17 +104,17 @@ renderer logs why (`touchbar-custom log`) and keeps the previous config.
 
 ### Widgets
 
-Every widget has an `id`. Built-in widgets use `touchbar.*` ids; your own
+Every widget has an `id`. Built-in widgets use `glance.*` ids; your own
 widgets set a `type` and can use any id.
 
 | Widget | Options |
 |---|---|
-| `touchbar.esc` | `width` (140). Sends Esc. |
-| `touchbar.agents` | `agent` (`"claude"`; any record in `~/.local/state/omarchy/agents/usage/`), `layout` (`"row"`: meters side by side with their names above; `"stacked"`: meters on top of each other with short labels on the left), `meterWidth` (200, or 120 stacked), `shortLabels` (stacked labels, default `{"Session": "5h", "Weekly": "7d"}`), `resets` (when each limit resets: `"time"` shows the clock time, with the weekday when it's more than a day away; `"countdown"` shows time left, e.g. `4h 12m`; `"none"`), `timeFormat` / `dayTimeFormat` (strftime, `"%H:%M"` / `"%a %H:%M"`), `onTap` (toggles the Omarchy agents panel; `""` for nothing). |
-| `touchbar.mic` | Mic mute toggle with a live waveform while an app records. See [Microphone](#microphone). |
-| `touchbar.media` | Previous, play/pause and next keys and the current track. See [Media](#media). |
-| `touchbar.cpu`, `.memory`, `.gpu`, `.network`, `.disk`, `.battery`, `.fan` | A label, a btop-style dot graph of recent history, and the current value. See [Graphs](#graphs). |
-| `touchbar.spacer` | `size` (40). Empty space. |
+| `glance.esc` | `width` (140). Sends Esc. |
+| `glance.agents` | `agent` (`"claude"`; any record in `~/.local/state/omarchy/agents/usage/`), `layout` (`"row"`: meters side by side with their names above; `"stacked"`: meters on top of each other with short labels on the left), `meterWidth` (200, or 120 stacked), `shortLabels` (stacked labels, default `{"Session": "5h", "Weekly": "7d"}`), `resets` (when each limit resets: `"time"` shows the clock time, with the weekday when it's more than a day away; `"countdown"` shows time left, e.g. `4h 12m`; `"none"`), `timeFormat` / `dayTimeFormat` (strftime, `"%H:%M"` / `"%a %H:%M"`), `onTap` (toggles the Omarchy agents panel; `""` for nothing). |
+| `glance.mic` | Mic mute toggle with a live waveform while an app records. See [Microphone](#microphone). |
+| `glance.media` | Previous, play/pause and next keys and the current track. See [Media](#media). |
+| `glance.cpu`, `.memory`, `.gpu`, `.network`, `.disk`, `.battery`, `.fan` | A label, a btop-style dot graph of recent history, and the current value. See [Graphs](#graphs). |
+| `glance.spacer` | `size` (40). Empty space. |
 | `"type": "button"` | `icon` (Nerd Font glyph) or `label` (text), `iconSize` (30), `fontSize` (18), `width` (140); then either `exec` (shell command) or `key` (`"esc"`, `"f1"`…`"f12"`), and `repeat` (`true` repeats while held). |
 | `"type": "command"` | `exec` (shell command whose output is shown), `interval` (seconds; omit to run once), `onTap` (shell command), `fontSize` (18), `width` (sized to the text when omitted). |
 
@@ -123,7 +126,7 @@ command modules, it also accepts Waybar-style JSON:
 `{"text": "…", "class": "critical"}`. A class of `urgent` or `critical` turns
 the text red.
 
-Each provider can have its own `touchbar.agents` widget. Claude and Codex use
+Each provider can have its own `glance.agents` widget. Claude and Codex use
 copies of the Omarchy agents panel logos; other providers use the agents glyph.
 Configured provider widgets appear only when the shared Omarchy usage record
 contains limits, a valid balance, or positive all-time/today prompt or session
@@ -142,8 +145,8 @@ history aggregation remain specific to the system panel.
 For example, place these together in a layer's `right` list:
 
 ```json
-{ "id": "touchbar.agents", "agent": "claude", "layout": "stacked" },
-{ "id": "touchbar.agents", "agent": "codex", "layout": "stacked" }
+{ "id": "glance.agents", "agent": "claude", "layout": "stacked" },
+{ "id": "glance.agents", "agent": "codex", "layout": "stacked" }
 ```
 
 ### Graphs
@@ -153,18 +156,18 @@ the right, coloured with btop's gradient. Tap one to open btop (as
 Super+Ctrl+T does). Only CPU and memory are on the bar by default.
 
 ```json
-{ "id": "touchbar.cpu", "cores": true, "temperature": true }
+{ "id": "glance.cpu", "cores": true, "temperature": true }
 ```
 
 | Widget | Graph | Value | Own options |
 |---|---|---|---|
-| `touchbar.cpu` | usage | `%` | `cores` (`false`): a small meter per core after the graph. `temperature`, `sensor` (`"coretemp"`). |
-| `touchbar.memory` | RAM in use (as btop and `free` count it) | `%` | |
-| `touchbar.gpu` | GPU load (amdgpu `gpu_busy_percent`) | `%` | `card` (first GPU that reports load, e.g. `"card1"`). `temperature`, `sensor` (the GPU's own hwmon). |
-| `touchbar.network` | download up, upload down | `↓1.2M` `↑40K` (bytes/s) | `interface` (the default route's). |
-| `touchbar.disk` | reads up, writes down | `R 1.2M` `W 40K` (bytes/s) | `device` (first disk in `/sys/block`, e.g. `"nvme0n1"`), `show` (`"io"`, or `"usage"` for how full `mount` is), `mount` (`"/"`). |
-| `touchbar.battery` | a level meter: filled left to right to the charge, in one colour from red (empty) to green (full) | `%` | Label is a battery icon for the level and charging state. `graph` (`"level"`; `"charge"` or `"power"` for a history of the charge or of power draw in watts). `gradient` sets the meter's colours, empty to full. `detail` (`"none"`; `"time"` adds time to empty or full under the %, `"power"` adds watts), `low` (`15`: % at which it turns red while discharging), `maxPower` (auto; the power graph's top), `battery` (`"BAT0"`). |
-| `touchbar.fan` | speed as a fraction of the fan's max | rpm | `fan` (`1`). Read from hwmon (applesmc on this Mac). |
+| `glance.cpu` | usage | `%` | `cores` (`false`): a small meter per core after the graph. `temperature`, `sensor` (`"coretemp"`). |
+| `glance.memory` | RAM in use (as btop and `free` count it) | `%` | |
+| `glance.gpu` | GPU load (amdgpu `gpu_busy_percent`) | `%` | `card` (first GPU that reports load, e.g. `"card1"`). `temperature`, `sensor` (the GPU's own hwmon). |
+| `glance.network` | download up, upload down | `↓1.2M` `↑40K` (bytes/s) | `interface` (the default route's). |
+| `glance.disk` | reads up, writes down | `R 1.2M` `W 40K` (bytes/s) | `device` (first disk in `/sys/block`, e.g. `"nvme0n1"`), `show` (`"io"`, or `"usage"` for how full `mount` is), `mount` (`"/"`). |
+| `glance.battery` | a level meter: filled left to right to the charge, in one colour from red (empty) to green (full) | `%` | Label is a battery icon for the level and charging state. `graph` (`"level"`; `"charge"` or `"power"` for a history of the charge or of power draw in watts). `gradient` sets the meter's colours, empty to full. `detail` (`"none"`; `"time"` adds time to empty or full under the %, `"power"` adds watts), `low` (`15`: % at which it turns red while discharging), `maxPower` (auto; the power graph's top), `battery` (`"BAT0"`). |
+| `glance.fan` | speed as a fraction of the fan's max | rpm | `fan` (`1`). Read from hwmon (applesmc on this Mac). |
 
 Network and disk graphs scale to the busiest recent sample, like btop, with a
 floor of `minScale` bytes/s (`10240`).
@@ -189,7 +192,7 @@ Options for all graphs:
 
 ### Microphone
 
-`touchbar.mic` shows whether the default input is muted (grey, crossed out) or
+`glance.mic` shows whether the default input is muted (grey, crossed out) or
 live (white), and tapping it toggles mute with Omarchy's
 `omarchy-audio-input-mute`, which shows the OSD. While any app records from the
 mic, the icon turns red and a live waveform appears next to it.
@@ -210,7 +213,7 @@ any of those ends. It shows up in mixers as "Touch Bar level meter".
 
 ### Media
 
-`touchbar.media` is four keys: previous, play/pause and next, then the track
+`glance.media` is four keys: previous, play/pause and next, then the track
 title and artist. It uses the Omarchy shell's media service, so it controls
 the same player as the media keys and the bar, and greys out what the player
 can't do. It updates as soon as a player reports a change over MPRIS (via

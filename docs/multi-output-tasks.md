@@ -11,19 +11,19 @@ unless included below.
 
 ### R01 — Rename the project
 
-- [ ] Rename the GitHub repo to `omarchy-glance` and update the local remote;
+- [x] Rename the GitHub repo to `omarchy-glance` and update the local remote;
   move the checkout to `~/Work/omarchy-glance`.
-- [ ] Rename the crate and binary to `omarchy-glance`, and fold
+- [x] Rename the crate and binary to `omarchy-glance`, and fold
   `touchbar-custom` into its subcommands (`on`, `off`, `restart`, `status`,
   `log`, `config [edit]`); the t1bridge renderer link points at the binary
   until T04 introduces the wrapper.
-- [ ] Read the user config from `~/.config/omarchy-glance/touchbar.json` only
+- [x] Read the user config from `~/.config/omarchy-glance/touchbar.json` only
   (no fallback to the old path); move the existing
   `~/.config/touchbar/config.json` there by hand; rename the built-in default
   to `touchbar.default.json`.
-- [ ] Switch widget IDs to the `glance.` prefix in code, the default config,
+- [x] Switch widget IDs to the `glance.` prefix in code, the default config,
   docs, and the moved user config; drop `touchbar.*` IDs entirely.
-- [ ] Update README, TODO, ADR references, and the Python renderer only as far
+- [x] Update README, TODO, ADR references, and the Python renderer only as far
   as needed to keep it working until T05 removes it.
 
 Acceptance: a fresh build from the renamed checkout drives the Touch Bar
@@ -38,7 +38,7 @@ name.
 
 - [ ] Add a deterministic preview: fixed clock and fixed provider data (graph
   history, agent usage, media, mic state, command output).
-- [ ] Commit golden PNGs for the default and Fn layers of `config.default.json`
+- [ ] Commit golden PNGs for the default and Fn layers of `touchbar.default.json`
   and of a config that uses every widget kind.
 - [ ] Record current performance (RSS, CPU, full-frame time) with the same
   method as the baseline in the Rust-port notes.

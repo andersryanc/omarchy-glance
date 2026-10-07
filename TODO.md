@@ -1,4 +1,4 @@
-# Touch Bar to-do
+# omarchy-glance to-do
 
 Ideas for the renderer, from the 2026-10-04 brainstorm. **Proposed** items are
 waiting for a yes or no.
@@ -12,17 +12,17 @@ waiting for a yes or no.
       Omarchy agents panel; local testing layout replaces CPU/memory (2026-10-06).
 
 - [x] Monitoring graphs, supported but not on the bar by default:
-      `touchbar.gpu`, `.network`, `.disk`, `.battery`, `.fan` (2026-10-04)
-- [x] Media controls on the Fn layer: `touchbar.media` (2026-10-04)
+      `glance.gpu`, `.network`, `.disk`, `.battery`, `.fan` (2026-10-04)
+- [x] Media controls on the Fn layer: `glance.media` (2026-10-04)
 - [x] Mic mute toggle on the default layer with a live waveform while any app
-      records: `touchbar.mic` (2026-10-04)
+      records: `glance.mic` (2026-10-04)
 - [x] Keyboard backlight: button snippets in the README (2026-10-04)
 
 ## Approved
 
 ### Backend and desktop outputs ([ADR 0001](docs/adr/0001-multiple-output-architecture.md), [tasks](docs/multi-output-tasks.md))
 
-- [ ] Stage 0: rename the project to `omarchy-glance`, with the Touch Bar config
+- [x] Stage 0: rename the project to `omarchy-glance`, with the Touch Bar config
       at `~/.config/omarchy-glance/touchbar.json` (R01).
 - [ ] Stage 1: split out a backend service; the Touch Bar renderer becomes its
       first client and must match current behavior and appearance (T00–T04).

@@ -1,4 +1,4 @@
-//! Microphone state for the touchbar.mic widget.
+//! Microphone state for the glance.mic widget.
 //!
 //! Tracks whether the default source is muted and whether any other app is
 //! recording from it, by listening to `pactl subscribe` and re-reading
@@ -205,7 +205,7 @@ impl Mic {
     fn start_levels(&mut self, device: &str) {
         let (rate, dev) = (format!("--rate={RATE}"), format!("--device={device}"));
         let args = ["parec", "--raw", "--format=s16le", &rate, "--channels=1", "--latency-msec=20", &dev,
-                    "--client-name=touchbar", "--stream-name=Touch Bar level meter"];
+                    "--client-name=omarchy-glance", "--stream-name=Touch Bar level meter"];
         match popen(&args, true) {
             Ok(p) => {
                 self.rec = Some(p);

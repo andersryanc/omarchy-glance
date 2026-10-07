@@ -1,4 +1,4 @@
-//! Data sources for the graph widgets (touchbar.cpu, touchbar.network, ...).
+//! Data sources for the graph widgets (glance.cpu, glance.network, ...).
 //!
 //! Each source reads the system once per sample. `sample()` returns one raw
 //! value per series (or None while it has nothing to show yet) and sets
@@ -83,13 +83,13 @@ pub enum Kind {
 
 pub fn kind_of(id: &str) -> Option<Kind> {
     Some(match id {
-        "touchbar.cpu" => Kind::Cpu,
-        "touchbar.memory" => Kind::Memory,
-        "touchbar.gpu" => Kind::Gpu,
-        "touchbar.network" => Kind::Network,
-        "touchbar.disk" => Kind::Disk,
-        "touchbar.battery" => Kind::Battery,
-        "touchbar.fan" => Kind::Fan,
+        "glance.cpu" => Kind::Cpu,
+        "glance.memory" => Kind::Memory,
+        "glance.gpu" => Kind::Gpu,
+        "glance.network" => Kind::Network,
+        "glance.disk" => Kind::Disk,
+        "glance.battery" => Kind::Battery,
+        "glance.fan" => Kind::Fan,
         _ => return None,
     })
 }

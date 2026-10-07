@@ -229,6 +229,24 @@ fn hold_to_repeat_and_cancel() {
 }
 
 #[test]
+fn closing_session_does_nothing_more() {
+    let dir = Dir::new("closing");
+    let log = dir.0.join("presses");
+    dir.write_config(json!({"default": {"left": [
+        {"id": "up", "type": "button", "exec": format!("echo x >> {}", log.display()), "repeat": true}
+    ]}}));
+    let mut b = dir.backend();
+    let (id, generation) = hello(&mut b);
+    let press = |req: u64, pointer: u64| json!({"type":"press","id":req,"generation":generation,"widget":"default.left.0","pointer":pointer}).to_string();
+    let t0 = now();
+    b.handle_line(id, &press(2, 1), t0);
+    b.too_large(id); // fatal, while pointer 1 is held
+    b.handle_line(id, &press(3, 2), t0);
+    b.tick(t0 + 1.0); // past the repeat delay
+    assert_eq!(wait_for_lines(&log, 2), 1, "only the press before the error ran");
+}
+
+#[test]
 fn config_reload_sends_snapshot_and_ends_presses() {
     let dir = Dir::new("reload");
     let log = dir.0.join("presses");

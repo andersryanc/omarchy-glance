@@ -197,6 +197,14 @@ struct Session {
     closing: bool,
 }
 
+impl Session {
+    /// A fatal error: nothing more is answered or done for this session.
+    fn close(&mut self) {
+        self.closing = true;
+        self.pointers.clear();
+    }
+}
+
 pub struct Backend {
     paths: Paths,
     outputs: HashMap<Output, OutputConfig>,
@@ -287,7 +295,7 @@ impl Backend {
         let replies = s.out.iter().filter(|o| matches!(o, Out::Line(_))).count();
         if replies >= MAX_REPLIES {
             s.out.push_back(Out::Line(error_line(None, error::QUEUE_OVERFLOW, "too many unread replies")));
-            s.closing = true;
+            s.close();
             return;
         }
         s.out.push_back(Out::Line(line));
@@ -296,7 +304,7 @@ impl Backend {
     fn fail(&mut self, id: u64, req: Option<&Value>, code: &str, message: &str) {
         self.push(id, error_line(req, code, message));
         if error::fatal(code) && let Some(s) = self.sessions.get_mut(&id) {
-            s.closing = true;
+            s.close();
         }
     }
 
@@ -314,6 +322,9 @@ impl Backend {
 
     /// One request line from a client.
     pub fn handle_line(&mut self, id: u64, line: &str, t: f64) {
+        if self.closing(id) {
+            return; // the rest of a batch after a fatal error
+        }
         let msg: Value = match serde_json::from_str(line) {
             Ok(Value::Object(m)) => Value::Object(m),
             Ok(_) => return self.fail(id, None, error::BAD_MESSAGE, "expected a JSON object"),

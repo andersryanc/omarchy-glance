@@ -189,10 +189,11 @@ colour or the row height changes (not when only the wallpaper changes, like
 the bar). Muted text (reset times, "No media") can be faint on a busy
 wallpaper.
 
-Remaining gaps: monitor hotplug and a second monitor are untested (one
-monitor here; each screen gets its own window through `Variants`, and the
-row on a monitor not named in `desktop.json` isn't created); the row can't
-follow the bar to the bottom or the sides; a vertical bar isn't handled.
+A second monitor gets its own row when plugged in (each screen has its own
+window through `Variants`; checked by the user), and unplugging it leaves
+the built-in display's rows in order. Remaining gaps: `"monitor"` is
+untested (a monitor it doesn't name gets no row); the row can't follow the
+bar to the bottom or the sides; a vertical bar isn't handled.
 
 ## Development host
 

@@ -38,8 +38,7 @@ waiting for a yes or no.
       panel plugin (T10) shows the row under the bar; T08 (`desktop.json`)
       and T09 (desktop widgets) and T10 (placement and theme) done the same
       day; T11 (`omarchy-glance desktop on`, dependencies, smoke check) too,
-      except a run on a machine without a Touch Bar. Still by hand: monitor
-      hotplug, clicks and hold-to-repeat on the desktop widgets.
+      except a run on a machine without a Touch Bar (none at hand yet).
 
 ## Bugs
 

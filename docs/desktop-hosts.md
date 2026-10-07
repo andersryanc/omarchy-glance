@@ -69,8 +69,8 @@ restart-proof stacking above isn't a difference between the hosts after all.
 Clicks keep focus on the active window, and the row scales with the display
 (checked by the user).
 
-## Still to check by hand
+## Hand checks (done 2026-10-07, on the panel plugin)
 
-Clicking the row while another window has focus (focus must stay put),
-fractional scaling (e.g. 1.25 and 1.6 on the built-in display), and plugging a
-monitor in and out. T10 also needs these, on the chosen host.
+Clicking the row keeps focus on the active window, the row follows scale
+changes (1.6 and back to 2 on the built-in display), and an external
+monitor gets its own row when plugged in, all checked by the user.

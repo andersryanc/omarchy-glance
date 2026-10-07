@@ -246,8 +246,8 @@ height from `desktop.json`, the live theme (a theme switch, light and dark,
 applies without a backend restart), the bar's transparency, and the
 behaviour with the bar hidden, moved or absent documented in
 [desktop-client.md](desktop-client.md#behaviour-with-the-bar). Windows sit
-below both rows, and disabling the plugin releases the space. Untested: a
-second monitor and hotplug (one monitor here).
+below both rows, and disabling the plugin releases the space. Monitor
+hotplug checked by the user with an external monitor.
 
 Acceptance: normal tiled and maximized windows sit below both rows on the
 selected monitor; other monitors are unaffected; theme changes apply without a
@@ -269,7 +269,8 @@ needs no checkout; omarchy-shell mounts the plugin at login and the row's
 connection starts the backend. Install steps and dependencies are in the
 README ([On a machine without a Touch Bar](../README.md#on-a-machine-without-a-touch-bar)),
 the smoke check and this machine's run in [release-check.md](release-check.md)
-(monitor changes and the T09 widgets' clicks are still to check by hand).
+(monitor hotplug and the widgets' clicks checked by the user; a run on a
+machine without a Touch Bar is still owed).
 
 Acceptance: documented steps produce a working desktop row on a machine with no
 Touch Bar, and the Touch Bar workflow still works on this one.

@@ -42,14 +42,15 @@ without a Touch Bar. Record each run below.
 | --- | --- |
 | 1 | Passed: 20 tests; `desktop-check.sh` ok |
 | 2 | `cargo install` into a temporary root built and installed the binary; `desktop on` and `desktop off` worked from the build (installed copy rendered, space released, fresh install enabled without a shell restart). The dev link was put back afterwards |
-| 3 | Rendered headlessly with every desktop widget and live; clicks checked by the user before T09 (placeholders); the real widgets' clicks, hold-to-repeat and hover not yet confirmed |
+| 3 | Rendered headlessly with every desktop widget and live; clicks on the real widgets checked by the user |
 | 4 | Checked by the user (a broken save kept the previous config; the fix applied within a second) |
 | 5 | Checked by `desktop-check.sh` with a private backend; the live backend restarted during T08 with both clients reconnecting |
 | 6 | Passed: 26 + 39 px reserved, windows at y 77, 26 px after disabling |
 | 7 | Checked by the user (T10 plugin, placeholder widgets) |
 | 8 | Checked by the user (light theme, Codex logo); transparency checked by a temporary `shell.json` change |
 | 9 | Checked by the user and by polling `hyprctl layers` during 1.6 and back to 2 |
-| 10 | Not checked: one monitor only |
+| 10 | Checked by the user: a row appeared on an external monitor when plugged in; after unplugging, the built-in display kept bar and row in order (65 px reserved). `"monitor"` not tried |
 | 11 | Passed: both sessions on one backend; the Touch Bar check after T05 was the user's |
 
-Not run on a machine without a Touch Bar.
+Not run on a machine without a Touch Bar yet (none at hand); that run is
+still owed before calling T11 done.

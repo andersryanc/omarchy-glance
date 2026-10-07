@@ -117,8 +117,10 @@ fn config(output: Output, edit: bool) -> Result<(), String> {
         println!("created {} from the default", path.display());
     }
     if edit {
-        let editor = std::env::var("EDITOR").unwrap_or_else(|_| "nvim".into());
-        return Err(format!("{editor}: {}", Command::new(&editor).arg(&path).exec()));
+        // $EDITOR may carry arguments (Omarchy's is "omarchy-launch-editor --inline").
+        let editor = std::env::var("EDITOR").ok().filter(|e| !e.trim().is_empty()).unwrap_or_else(|| "nvim".into());
+        let err = Command::new("sh").args(["-c", &format!("exec {editor} \"$1\""), "sh"]).arg(&path).exec();
+        return Err(format!("{editor}: {err}"));
     }
     println!("{}", path.display());
     Ok(())

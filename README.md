@@ -98,7 +98,7 @@ Bar client are in place; the desktop client is not yet implemented.
 | `touchbar.default.json` | The default Touch Bar config, compiled into the binary. |
 | `docs/` | t1bridge's IPC spec and README, the nohzafk T1 notes, the T1's USB descriptors. |
 | `tests/golden/` | Golden-preview images, the config that uses every widget kind, and the fixed data they're drawn with. |
-| `tools/` | Hardware experiments, e.g. `cutoff_test.py` (the 2060 px limit), and `perf.sh` (memory and CPU of the running bar). |
+| `tools/` | Hardware experiments, e.g. `cutoff_test.py` (the 2060 px limit), `perf.sh` (memory and CPU of the running bar), and `spikes/desktop-host/` (the T06 desktop host spikes). |
 | `TODO.md` | Backlog. |
 
 ## Configuration

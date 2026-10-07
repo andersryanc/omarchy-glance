@@ -157,14 +157,20 @@ Dependencies: T04, and a final go-ahead from the user to delete `python/`.
 
 ### T06 — Compare desktop hosts
 
-- [ ] Build a throwaway standalone Quickshell `PanelWindow` with hardcoded
+- [x] Build a throwaway standalone Quickshell `PanelWindow` with hardcoded
   content, and the same as an Omarchy third-party `panel` plugin using
   `PluginBarStateApi`.
 - [ ] For each, check: stacking below the Omarchy bar, including after an
   `omarchy-shell` restart; clicks that keep focus on the active window;
   fractional scaling; fullscreen windows; the bar moved to another edge or
   hidden; monitor hotplug; space released on exit.
-- [ ] Check what theme and transparency data each host can follow.
+- [x] Check what theme and transparency data each host can follow.
+
+Done 2026-10-07 except clicks and focus, fractional scaling and monitor
+hotplug, which need someone at the machine; the comparison and the
+recommendation (the panel plugin as the host, standalone kept for
+development) are in [desktop-hosts.md](desktop-hosts.md), the spikes in
+`tools/spikes/desktop-host/`.
 
 Acceptance: a short written comparison with a recommended primary host and
 whether the other is kept as an option. Dependencies: none (can overlap

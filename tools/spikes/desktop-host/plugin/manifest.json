@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "glance.host-spike",
+  "name": "Glance host spike",
+  "version": "0.0.1",
+  "author": "omarchy-glance",
+  "description": "T06 spike: a hardcoded glance row as a panel plugin inside omarchy-shell.",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": { "panel": "Panel.qml" }
+}

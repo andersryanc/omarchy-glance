@@ -30,9 +30,9 @@ monitors`, plus screenshots.
 | Theme data available | `colors.toml` palette; shell surface roles and sizing only by parsing `shell.toml` and `~/.config/omarchy/shell.toml` ourselves | `Color` (palette and surface roles such as `Color.bar.*`), `Style` (type scale, spacing, bar sizes), live |
 | Bar state | Inferred: `hyprctl layers` / `shell.json` / the `bar-off` toggle file | `PluginBarStateApi`: `barHidden`, `barSize`, `fontFamily`, `position` |
 | Transparency | Readable from `shell.json` (`bar.transparent`) | Not in the facade; readable from `shell.json` the same way |
-| Clicks keep focus on the active window | Not tested (no way to click remotely); both set `keyboardFocus: None`, which Hyprland honours for layer surfaces | Same |
-| Fractional scaling | Not tested (changing the scale of the streamed display would disrupt the session) | Not tested |
-| Monitor hotplug | Not tested; both create one window per `Quickshell.screens` entry through `Variants` | Not tested |
+| Clicks keep focus on the active window | Not tested; sets `keyboardFocus: None`, which Hyprland honours for layer surfaces | Yes (checked by the user) |
+| Fractional scaling | Not tested | Stays under the bar at 1.6 and back to 2, with the remap (checked by the user) |
+| Monitor hotplug | Not tested; creates one window per `Quickshell.screens` entry through `Variants` | A plugged-in monitor gets its own row (checked by the user) |
 | Autostart and install | Ours to provide (a user service or Hyprland autostart) | The shell mounts it at startup once enabled; installs with `omarchy plugin add`. It reloads plugins on file save, but keeps a keepLoaded panel's first compiled version: edits need `omarchy-restart-shell` (found with the real row) |
 | Isolation | Own process: a bug in the row can't stall the bar, notifications or the lock screen | Runs unsandboxed in `omarchy-shell`: a hang or heavy work in the row stalls the whole desktop shell, including the lock screen |
 | API stability | Only Quickshell and Hyprland | The third-party plugin facade, `keepLoaded` panels and `qs.Commons`, all new in Omarchy 4 |

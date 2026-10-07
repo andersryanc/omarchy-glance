@@ -42,7 +42,7 @@ without a Touch Bar. Record each run below.
 | --- | --- |
 | 1 | Passed: 20 tests; `desktop-check.sh` ok |
 | 2 | `cargo install` into a temporary root built and installed the binary; `desktop on` and `desktop off` worked from the build (installed copy rendered, space released, fresh install enabled without a shell restart). The dev link was put back afterwards |
-| 3 | Rendered headlessly with every desktop widget and live; clicks on the real widgets checked by the user |
+| 3 | Rendered headlessly with every desktop widget and live; clicks on the real widgets and hold-to-repeat (volume buttons) checked by the user |
 | 4 | Checked by the user (a broken save kept the previous config; the fix applied within a second) |
 | 5 | Checked by `desktop-check.sh` with a private backend; the live backend restarted during T08 with both clients reconnecting |
 | 6 | Passed: 26 + 39 px reserved, windows at y 77, 26 px after disabling |

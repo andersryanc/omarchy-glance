@@ -17,7 +17,17 @@ Face {
   readonly property real iconSize: Math.min(height - view.px(12), view.px(24))
   readonly property real small: host.fontSize * 0.9
   readonly property string agent: String(o.agent ?? "claude")
-  readonly property string iconUrl: host.agentIcons && ["claude", "codex"].includes(agent) ? host.agentIcons + agent + ".svg" : ""
+  // As Omarchy's agents panel picks them: <agent>-light.svg first on a light
+  // surface (white marks have a dark twin), then <agent>.svg, then a glyph.
+  readonly property var iconUrls: {
+    if (!host.agentIcons) return []
+    const c = host.background
+    const lum = ch => (ch <= 0.03928 ? ch / 12.92 : Math.pow((ch + 0.055) / 1.055, 2.4))
+    const light = 0.2126 * lum(c.r) + 0.7152 * lum(c.g) + 0.0722 * lum(c.b) >= 0.5
+    return (light ? [host.agentIcons + agent + "-light.svg"] : []).concat([host.agentIcons + agent + ".svg"])
+  }
+  property int iconTry: 0
+  onIconUrlsChanged: iconTry = 0
   property date now: new Date()
 
   host: view.host
@@ -40,8 +50,9 @@ Face {
     anchors.verticalCenter: parent.verticalCenter
     width: root.iconSize; height: root.iconSize
     sourceSize: Qt.size(width * 2, height * 2)
-    source: root.iconUrl
-    visible: root.iconUrl !== "" && status === Image.Ready
+    source: root.iconUrls[root.iconTry] ?? ""
+    visible: status === Image.Ready
+    onStatusChanged: if (status === Image.Error) root.iconTry++ // try the next candidate
   }
   Text {
     x: root.pad

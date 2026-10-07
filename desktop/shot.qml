@@ -10,6 +10,11 @@ ShellRoot {
   GlanceHost {
     id: env
     scale: Number(Quickshell.env("GLANCE_SCALE") || 1)
+    background: glanceClient.color("background", "#101315")
+    foreground: glanceClient.color("foreground", "#cacccc")
+    accent: glanceClient.color("accent", "#cacccc")
+    urgent: glanceClient.color("urgent", "#a55555")
+    muted: glanceClient.color("muted", "#707880")
     fontSize: 13 * scale
     btop: btop.colors
     agentIcons: "file:///usr/share/omarchy/shell/plugins/agents/assets/"

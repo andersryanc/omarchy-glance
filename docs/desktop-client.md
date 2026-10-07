@@ -72,7 +72,8 @@ the same pixels. Graphs use the same dot rows, mirrored halves (network,
 disk), per-core meters and battery level meter, with btop's current theme
 for gradients (`GlanceHost.btop`, which hosts fill from `BtopTheme`) or a
 widget's `gradient`; agents show Omarchy's provider logos
-(`GlanceHost.agentIcons`) and format reset times from the local clock each
+(`GlanceHost.agentIcons`; `<agent>-light.svg` first on a light background, as
+the agents panel does) and format reset times from the local clock each
 minute; the mic shows its waveform while another app records; media splits
 into previous, play/pause, next and title zones. Option sizes are desktop
 pixels, multiplied by `GlanceHost.scale`; the defaults are in the README's

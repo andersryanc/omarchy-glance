@@ -39,6 +39,9 @@ monitors`, plus screenshots.
 
 ## Recommendation
 
+Approved by the user on 2026-10-07; [desktop-client.md](desktop-client.md)
+builds on it.
+
 Use the **Omarchy panel plugin as the primary host**. The project is
 Omarchy-only, and the plugin gets the things the standalone host has to
 rebuild: correct stacking across shell restarts without a remap hack, the live

@@ -88,17 +88,20 @@ A planned split into a backend service with Touch Bar and desktop clients (for
 machines without a Touch Bar) is documented in
 [ADR 0001](docs/adr/0001-multiple-output-architecture.md), with
 [implementation tasks](docs/multi-output-tasks.md). The backend and the Touch
-Bar client are in place; the desktop client is not yet implemented.
+Bar client are in place; the desktop client's connection and host contract
+are in `desktop/` ([desktop-client.md](docs/desktop-client.md)), its widgets
+and the Omarchy panel plugin that hosts it are not yet implemented.
 
 | Path | |
 |---|---|
 | `src/backend/` | Backend service: `mod.rs` (config, widgets, sessions, demand, actions), `providers.rs`, `server.rs` (socket), `tests.rs`. `src/protocol.rs` holds names shared with clients. |
 | `systemd/` | User units for the backend, compiled into the binary for `on`. |
 | `src/` | `main.rs` (entry and modes), `cli.rs` (control subcommands), `proto.rs` (t1bridge IPC, memfd buffers), `config.rs`, `renderer.rs` (the Touch Bar client: backend link, layout, drawing, input, event loop, `preview`) with `renderer/golden.rs` (golden-preview tests) and `renderer/tests.rs`, `sources.rs` (graph data), `mic.rs`, `proc.rs` (child processes). |
+| `desktop/` | The desktop client (QML): shared controls in `glance/`, the development host `shell.qml` (`qs -p desktop`), and `check.qml` for `tools/desktop-check.sh`. |
 | `touchbar.default.json` | The default Touch Bar config, compiled into the binary. |
 | `docs/` | t1bridge's IPC spec and README, the nohzafk T1 notes, the T1's USB descriptors. |
 | `tests/golden/` | Golden-preview images, the config that uses every widget kind, and the fixed data they're drawn with. |
-| `tools/` | Hardware experiments, e.g. `cutoff_test.py` (the 2060 px limit), `perf.sh` (memory and CPU of the running bar), and `spikes/desktop-host/` (the T06 desktop host spikes). |
+| `tools/` | Hardware experiments, e.g. `cutoff_test.py` (the 2060 px limit), `perf.sh` (memory and CPU of the running bar), `desktop-check.sh` (headless check of the desktop client), and `spikes/desktop-host/` (the T06 desktop host spikes). |
 | `TODO.md` | Backlog. |
 
 ## Configuration

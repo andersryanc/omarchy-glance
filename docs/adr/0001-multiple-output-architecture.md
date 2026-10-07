@@ -196,8 +196,10 @@ unsupported widgets, for example `glance.esc` in `desktop.json`.
 The desktop controls take a host environment (palette, font, scale, available
 size, transparency, visibility) and make no assumption about their window.
 
-Two hosts are candidates, to be compared by a spike before the desktop
-renderer is built:
+Two hosts were candidates, compared by a spike before the desktop renderer
+was built. **Decided 2026-10-07:** the Omarchy panel plugin is the host, and a
+standalone host is kept for development only
+([desktop-hosts.md](../desktop-hosts.md)).
 
 - **Standalone Quickshell `PanelWindow`** (layer-shell). It runs beside
   `omarchy-shell` rather than inside it, so a failure in one can't take down

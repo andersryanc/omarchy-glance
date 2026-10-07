@@ -31,10 +31,11 @@ waiting for a yes or no.
 - [x] Retire the Python renderer (T05; removed 2026-10-07, recoverable from
       git history before that commit).
 - [ ] Stage 2: spike standalone Quickshell vs Omarchy panel-plugin hosts (T06).
-      Compared 2026-10-07 ([desktop-hosts.md](docs/desktop-hosts.md)):
-      plugin recommended; clicks/focus, fractional scaling and hotplug still
-      to check by hand.
+      Compared 2026-10-07 ([desktop-hosts.md](docs/desktop-hosts.md)): the
+      panel plugin is the host (approved), standalone for development only;
+      clicks/focus, fractional scaling and hotplug still to check by hand.
 - [ ] Stage 3: desktop renderer for machines without a Touch Bar (T07–T11).
+      T07 (QML client and host contract, `desktop/`) done 2026-10-07.
 
 ## Bugs
 

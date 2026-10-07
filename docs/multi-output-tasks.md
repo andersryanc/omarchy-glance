@@ -169,7 +169,7 @@ Dependencies: T04, and a final go-ahead from the user to delete `python/`.
 Done 2026-10-07 except clicks and focus, fractional scaling and monitor
 hotplug, which need someone at the machine; the comparison and the
 recommendation (the panel plugin as the host, standalone kept for
-development) are in [desktop-hosts.md](desktop-hosts.md), the spikes in
+development; approved by the user 2026-10-07) are in [desktop-hosts.md](desktop-hosts.md), the spikes in
 `tools/spikes/desktop-host/`.
 
 Acceptance: a short written comparison with a recommended primary host and
@@ -180,11 +180,17 @@ Stage 1, but desktop work waits for T05).
 
 ### T07 — QML client and host contract
 
-- [ ] Implement connection, snapshots and updates, action results, and
+- [x] Implement connection, snapshots and updates, action results, and
   reconnection in QML.
-- [ ] Define the host environment (palette, font, scale, size, transparency,
+- [x] Define the host environment (palette, font, scale, size, transparency,
   visibility); shared controls never create their own window.
-- [ ] Add a small development host for working on controls without Omarchy.
+- [x] Add a small development host for working on controls without Omarchy.
+
+Done 2026-10-07 in `desktop/` ([desktop-client.md](desktop-client.md)), with
+placeholder widget controls until T09. The backend doesn't serve the `desktop`
+output yet (T08), so the development host shows the Touch Bar config.
+`tools/desktop-check.sh` checks the client headlessly against a private
+backend, including a backend restart.
 
 Acceptance: controls mount in a plain container; a backend restart restores
 state and shows a coherent disconnected state. Dependencies: T05, T06.

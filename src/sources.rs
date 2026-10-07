@@ -68,7 +68,8 @@ fn hwmon_by_name(name: &str) -> Option<String> {
         .find(|d| read_str(format!("{d}/name")).is_ok_and(|n| n == name))
 }
 
-fn pyround(v: f64) -> i64 {
+/// Round half to even, as the original renderer did; the layouts depend on it.
+fn round_even(v: f64) -> i64 {
     v.round_ties_even() as i64
 }
 
@@ -203,7 +204,7 @@ impl Source {
     }
 
     fn percent_line(&self, frac: f64) -> (String, bool) {
-        (format!("{}%", pyround(frac * 100.0)), frac >= num(&self.spec, "alarm", 0.9))
+        (format!("{}%", round_even(frac * 100.0)), frac >= num(&self.spec, "alarm", 0.9))
     }
 
     pub fn sample(&mut self) -> Res<Option<Vec<f64>>> {
@@ -256,7 +257,7 @@ impl Source {
             self.temp_path = Some(format!("{dir}/temp1_input"));
         }
         let t = read_int(self.temp_path.as_ref().unwrap())? as f64 / 1000.0;
-        Ok((format!("{}°", pyround(t)), t >= num(&self.spec, "temperatureAlarm", 90.0)))
+        Ok((format!("{}°", round_even(t)), t >= num(&self.spec, "temperatureAlarm", 90.0)))
     }
 
     // --- cpu ----------------------------------------------------------------
@@ -398,7 +399,7 @@ impl Source {
     fn charge(&self) -> Res<i64> {
         for (now, full) in [("charge_now", "charge_full"), ("energy_now", "energy_full")] {
             if let (Ok(n), Ok(f)) = (self.bat_int(now), self.bat_int(full)) && f != 0 {
-                return Ok(pyround(100.0 * n as f64 / f as f64).min(100));
+                return Ok(round_even(100.0 * n as f64 / f as f64).min(100));
             }
         }
         self.bat_int("capacity")

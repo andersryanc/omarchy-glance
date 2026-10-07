@@ -67,7 +67,8 @@ fn cpu_count() -> usize {
     (unsafe { libc::sysconf(libc::_SC_NPROCESSORS_ONLN) }).max(1) as usize
 }
 
-fn pyround(v: f64) -> i64 {
+/// Round half to even, as the original renderer did; the layouts depend on it.
+fn round_even(v: f64) -> i64 {
     v.round_ties_even() as i64
 }
 
@@ -847,7 +848,7 @@ impl Renderer {
         let wave_x = left + icon_w + gap - (sp / 2.0 - style.radius); // first dot's ink at the gap
         let columns = (int(s, "waveformWidth", 120) / i64::from(style.sp)) as f64;
         let right = wave_x + (columns - 1.0) * sp + sp / 2.0 + style.radius; // last dot's ink
-        (left + icon_w / 2.0, wave_x, pyround(right + pad + f64::from(KEY_PAD)) as i32)
+        (left + icon_w / 2.0, wave_x, round_even(right + pad + f64::from(KEY_PAD)) as i32)
     }
 
     // --- graph widgets ------------------------------------------------------
@@ -1009,7 +1010,7 @@ impl Renderer {
             let v = if col < pad { None } else { Some(values[col - pad]) };
             let cx = x + col as f64 * sp + sp / 2.0;
             let lit = v.map_or(0, |v| {
-                let r = pyround(v * rows as f64);
+                let r = round_even(v * rows as f64);
                 let r = if r != 0 { r } else { i64::from(v > 0.01) };
                 r.clamp(i64::MIN, rows as i64).max(0) as usize
             });
@@ -1149,7 +1150,7 @@ impl Renderer {
                 self.set_color(cr, if alarm { urgent } else { white }, 1.0);
                 let _ = cr.fill();
             }
-            let pct = l.frac.map_or("—".to_string(), |f| format!("{}%", pyround(f * 100.0)));
+            let pct = l.frac.map_or("—".to_string(), |f| format!("{}%", round_even(f * 100.0)));
             self.draw_text_at(cr, &pct, mx + meter_w + 10.0 + pct_w, cy, STACKED_FONT, if alarm { urgent } else { white }, true);
             if reset_w != 0 {
                 let reset = reset_text(w, l.resets, self.clock);
@@ -1181,7 +1182,7 @@ impl Renderer {
                 self.set_color(cr, RESET_COLOR, 1.0);
                 let _ = cr.show_text(&format!("  {reset}"));
             }
-            let pct = l.frac.map_or("—".to_string(), |f| format!("{}%", pyround(f * 100.0)));
+            let pct = l.frac.map_or("—".to_string(), |f| format!("{}%", round_even(f * 100.0)));
             self.set_color(cr, if alarm { urgent } else { white }, 1.0);
             cr.move_to(x + meter_w - extents(cr, &pct).x_advance(), 25.0);
             let _ = cr.show_text(&pct);
@@ -1221,7 +1222,7 @@ impl Renderer {
             }
             return;
         }
-        let lit = match pyround(level * columns as f64) {
+        let lit = match round_even(level * columns as f64) {
             0 => usize::from(level > 0.0),
             n => n as usize,
         };

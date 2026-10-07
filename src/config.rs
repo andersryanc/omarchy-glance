@@ -1,4 +1,4 @@
-//! The JSON config (same format as the Python renderer; see README.md) and
+//! The JSON config (see README.md) and
 //! helpers for reading loosely typed widget options.
 
 use std::path::PathBuf;
@@ -50,7 +50,7 @@ pub fn num(spec: &Spec, key: &str, default: f64) -> f64 {
     }
 }
 
-/// An integer option (truncated, like Python's int()).
+/// An integer option (truncated toward zero).
 pub fn int(spec: &Spec, key: &str, default: i64) -> i64 {
     num(spec, key, default as f64) as i64
 }

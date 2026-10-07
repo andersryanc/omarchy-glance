@@ -132,11 +132,22 @@ back to the t1bridge built-in renderer. Dependencies: T03.
 
 ### T05 — Cut over, measure, and retire Python
 
-- [ ] Update the control subcommands and the README for the backend service;
+- [x] Update the control subcommands and the README for the backend service;
   remove the hardcoded checkout path where practical.
-- [ ] Compare performance against T00 and record the result.
-- [ ] Remove `python/` and the `on python` option, and drop Python
+- [x] Compare performance against T00 and record the result.
+- [x] Remove `python/` and the `on python` option, and drop Python
   compatibility notes from docs.
+
+Done 2026-10-07. `on` now installs the backend's units (compiled into the
+binary, with `ExecStart` pointing at it) and the renderer wrapper, enables the
+socket and restarts both services, so setup is `cargo build --release` and
+`omarchy-glance on`, with no `systemctl link` against the checkout and no
+compiled-in checkout path. `restart`, `status` and `log` cover the backend
+too, and `tools/perf.sh` measures both processes. Results are in
+[performance.md](performance.md): same frame times, +5.7 MB for the backend,
+CPU within 0.1 percentage point. `python/` and `on python` are gone (recover
+them from the history before this commit if needed); the only remaining
+mentions of Python are historical, in the ADR and this file.
 
 Acceptance: a fresh setup following the README gives a working Touch Bar;
 performance is recorded; no Python references remain.

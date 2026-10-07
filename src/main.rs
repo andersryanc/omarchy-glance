@@ -25,7 +25,7 @@ pub fn log(msg: &str) {
     eprintln!("omarchy-glance: {msg}");
 }
 
-/// Seconds on a monotonic clock, like Python's time.monotonic().
+/// Seconds on a monotonic clock since the first call.
 pub fn now() -> f64 {
     static START: OnceLock<Instant> = OnceLock::new();
     START.get_or_init(Instant::now).elapsed().as_secs_f64()

@@ -26,8 +26,10 @@ waiting for a yes or no.
       at `~/.config/omarchy-glance/touchbar.json` (R01).
 - [ ] Stage 1: split out a backend service; the Touch Bar renderer becomes its
       first client and must match current behavior and appearance (T00–T04).
-- [ ] Retire the Python renderer once the Touch Bar client is proven (T05;
-      confirm before deleting `python/`).
+      Built 2026-10-07; the hands-on check on the bar (every widget, touch,
+      hold-to-repeat, Fn, reload, invalid config) is still to do.
+- [x] Retire the Python renderer (T05; removed 2026-10-07, recoverable from
+      git history before that commit).
 - [ ] Stage 2: spike standalone Quickshell vs Omarchy panel-plugin hosts (T06).
 - [ ] Stage 3: desktop renderer for machines without a Touch Bar (T07–T11).
 

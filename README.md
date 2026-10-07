@@ -7,9 +7,11 @@ btop-style CPU and memory graphs and a Claude usage widget, and while Fn is
 held, brightness and volume keys and a mic-mute key with a live waveform. Everything on the bar
 comes from a JSON config.
 
-There are two implementations of the same renderer: the main one in Rust (at
-the repo root), and the original Python one in `python/`, kept as a fallback.
-Both read the same config and draw identical frames.
+It runs as two parts: a backend service (`omarchy-glance backend`) that reads
+the config, samples the system and runs actions, and the Touch Bar client
+(`omarchy-glance touchbar`) that draws the backend's widget state through
+t1bridge and sends it touches. A desktop row for machines without a Touch Bar
+is planned as a second client ([ADR 0001](docs/adr/0001-multiple-output-architecture.md)).
 
 ## Building
 
@@ -17,8 +19,17 @@ Both read the same config and draw identical frames.
 cargo build --release
 ```
 
-Rust comes from mise (`mise use -g rust@stable`). The Python renderer needs
-only `python-cairo`.
+Rust comes from mise (`mise use -g rust@stable`).
+
+Then set it up once:
+
+```
+ln -s "$PWD/target/release/omarchy-glance" ~/.local/bin/   # optional: put it on PATH
+target/release/omarchy-glance on
+```
+
+`on` installs the backend's systemd user units, enables its socket, and makes
+t1bridge run the Touch Bar client (see [Switching renderers](#switching-renderers)).
 
 To check a change without the hardware, draw one frame to a PNG (`fn` shows
 the Fn layer). This runs the backend and the Touch Bar client in one process,
@@ -41,24 +52,22 @@ installed. Performance measurements and their method are in
 ## Switching renderers
 
 ```
-omarchy-glance on            # use the Rust Touch Bar client (this binary)
-omarchy-glance on python     # use python/renderer.py instead
+omarchy-glance on            # install the backend and use this Touch Bar client
 omarchy-glance off           # back to the t1bridge built-in bar
-omarchy-glance restart       # restart after rebuilding or editing
-omarchy-glance status        # which renderer is selected and running
-omarchy-glance log           # follow the renderer's log
+omarchy-glance restart       # restart the backend and the bar after rebuilding
+omarchy-glance status        # which renderer is selected, and both services
+omarchy-glance log           # follow the client's and the backend's logs
 omarchy-glance config        # create ~/.config/omarchy-glance/touchbar.json if missing, print its path
 omarchy-glance config edit   # ... and open it in $EDITOR
 ```
 
-Link the binary onto your `PATH` once
-(`ln -s "$PWD/target/release/omarchy-glance" ~/.local/bin/`).
-`omarchy-glance touchbar` drives the Touch Bar as a client of the backend
-service (below), which must be set up first.
-
-`on` installs `~/.config/t1bridge/renderer`, a small script that runs
-`omarchy-glance touchbar` (`on python` links the Python renderer there
-instead), and restarts the `t1-touchbar` user service. If the renderer exits,
+`on` installs `omarchy-glance.socket` and `omarchy-glance.service` into
+`~/.config/systemd/user/` with this binary's path, enables the socket, and
+installs `~/.config/t1bridge/renderer`, a small script that runs
+`omarchy-glance touchbar`. It then restarts the backend (if running) and the
+`t1-touchbar` user service, so run it again if the binary moves. `off` only
+removes the renderer script; the backend stays installed but runs nothing
+without clients. If the renderer exits,
 t1bridge falls back to its built-in bar for the rest of the session, so the
 client never exits on its own: when the backend or t1bridge goes away it shows
 a disconnected state and reconnects.
@@ -68,17 +77,10 @@ a disconnected state and reconnects.
 `omarchy-glance backend` runs the backend service, which owns config,
 providers and actions and serves output clients on
 `$XDG_RUNTIME_DIR/omarchy-glance/backend.sock`
-([protocol](docs/backend-protocol.md)). It's socket-activated by systemd user
-units:
-
-```
-systemctl --user link "$PWD/systemd/omarchy-glance.socket" "$PWD/systemd/omarchy-glance.service"
-systemctl --user enable --now omarchy-glance.socket
-journalctl --user -u omarchy-glance -f    # its log
-```
-
-The service runs `~/.local/bin/omarchy-glance`. The Touch Bar client's first
-connection starts it.
+([protocol](docs/backend-protocol.md)). It's socket-activated by the systemd
+user units in `systemd/` (which `on` installs): the Touch Bar client's first
+connection starts it, and `journalctl --user -u omarchy-glance -f` follows its
+log.
 
 ## Repository layout
 
@@ -91,10 +93,9 @@ Bar client are in place; the desktop client is not yet implemented.
 | Path | |
 |---|---|
 | `src/backend/` | Backend service: `mod.rs` (config, widgets, sessions, demand, actions), `providers.rs`, `server.rs` (socket), `tests.rs`. `src/protocol.rs` holds names shared with clients. |
-| `systemd/` | User units for the backend. |
+| `systemd/` | User units for the backend, compiled into the binary for `on`. |
 | `src/` | `main.rs` (entry and modes), `cli.rs` (control subcommands), `proto.rs` (t1bridge IPC, memfd buffers), `config.rs`, `renderer.rs` (the Touch Bar client: backend link, layout, drawing, input, event loop, `preview`) with `renderer/golden.rs` (golden-preview tests) and `renderer/tests.rs`, `sources.rs` (graph data), `mic.rs`, `proc.rs` (child processes). |
-| `python/` | Python renderer: `renderer.py`, `sources.py`, `mic.py`. |
-| `touchbar.default.json` | The default Touch Bar config, shared: compiled into the Rust binary, read by Python. |
+| `touchbar.default.json` | The default Touch Bar config, compiled into the binary. |
 | `docs/` | t1bridge's IPC spec and README, the nohzafk T1 notes, the T1's USB descriptors. |
 | `tests/golden/` | Golden-preview images, the config that uses every widget kind, and the fixed data they're drawn with. |
 | `tools/` | Hardware experiments, e.g. `cutoff_test.py` (the 2060 px limit), and `perf.sh` (memory and CPU of the running bar). |

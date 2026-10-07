@@ -174,7 +174,7 @@ Checked 2026-10-07 on one monitor (`hyprctl layers` and `hyprctl monitors`):
 | Hidden (`omarchy-toggle-bar`) | At the top of the screen | row only (39 px); back under the bar when it's shown |
 | At the bottom (`omarchy bar position bottom`) | Stays at the top: the first release is a top row only | row at the top, bar at the bottom |
 | Transparent (`bar.transparent` in `~/.config/omarchy/shell.json`) | No row background, faces keep their fill; text in the colour `omarchy-bar-text-color` picks for the wallpaper behind both rows, as the bar does | unchanged |
-| Absent (another bar plugin, or none) | At the top of the screen, as when hidden | row only |
+| Absent (another bar plugin, or none) | Not tried; expected at the top of the screen, as when hidden | row only |
 | Scale change, shell restart | Hides while the bar is recreated, then maps under it | unchanged |
 | Plugin disabled | Gone | bar only (26 px) |
 

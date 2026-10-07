@@ -1,0 +1,8 @@
+[Unit]
+Description=omarchy-glance backend (widget data and actions for the Touch Bar and desktop row)
+Requires=omarchy-glance.socket
+After=omarchy-glance.socket
+
+[Service]
+ExecStart=%h/.local/bin/omarchy-glance backend
+Restart=on-failure

@@ -82,15 +82,20 @@ cannot request commands that are not configured. Dependencies: T01.
 
 ### T03 — Extract the backend service
 
-- [ ] Move config loading and reload, providers (graphs, agent usage, commands,
+- [x] Move config loading and reload, providers (graphs, agent usage, commands,
   media, mic), visibility rules, and action execution out of `renderer.rs` into
   backend modules with no Cairo dependency.
-- [ ] Implement the socket server inside the existing poll loop, with demand
+- [x] Implement the socket server inside the existing poll loop, with demand
   tracking so providers only run for visible, connected clients.
-- [ ] Move hold-to-repeat into the backend; cancel on release, widget removal,
+- [x] Move hold-to-repeat into the backend; cancel on release, widget removal,
   config reload, and disconnect.
-- [ ] Add the `backend` mode and systemd user units
+- [x] Add the `backend` mode and systemd user units
   (`omarchy-glance.service` and `omarchy-glance.socket`).
+
+Done in `src/backend/` (core, providers, server, tests) and `systemd/`. The
+renderer keeps drawing from its own in-process providers until T04 switches it
+to the protocol; it already shares the graph sources, mic, config parser and
+provider helpers with the backend, and T04 deletes its remaining copies.
 
 Acceptance: a test client receives a snapshot and updates; the last client
 disconnecting stops capture and polling; protocol tests cover malformed

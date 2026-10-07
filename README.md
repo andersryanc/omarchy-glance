@@ -58,6 +58,23 @@ arguments it drives the Touch Bar, which is how t1bridge starts it.
 the `t1-touchbar` user service. If the renderer exits, t1bridge falls back to
 its built-in bar.
 
+## Backend service
+
+`omarchy-glance backend` runs the backend service, which owns config,
+providers and actions and serves output clients on
+`$XDG_RUNTIME_DIR/omarchy-glance/backend.sock`
+([protocol](docs/backend-protocol.md)). It's socket-activated by systemd user
+units:
+
+```
+systemctl --user link "$PWD/systemd/omarchy-glance.socket" "$PWD/systemd/omarchy-glance.service"
+systemctl --user enable --now omarchy-glance.socket
+journalctl --user -u omarchy-glance -f    # its log
+```
+
+The service runs `~/.local/bin/omarchy-glance`. Until the Touch Bar renderer
+becomes a client of the backend (task T04), nothing connects to it.
+
 ## Repository layout
 
 A planned split into a backend service with Touch Bar and desktop clients (for
@@ -67,6 +84,8 @@ machines without a Touch Bar) is documented in
 
 | Path | |
 |---|---|
+| `src/backend/` | Backend service: `mod.rs` (config, widgets, sessions, demand, actions), `providers.rs`, `server.rs` (socket), `tests.rs`. `src/protocol.rs` holds names shared with clients. |
+| `systemd/` | User units for the backend. |
 | `src/` | Rust renderer: `main.rs` (entry, `--preview`), `cli.rs` (control subcommands), `proto.rs` (IPC, memfd buffers), `config.rs`, `renderer.rs` (widgets, layout, drawing, input, event loop) and `renderer/golden.rs` (golden-preview tests), `sources.rs` (graph data), `mic.rs`, `proc.rs` (child processes). |
 | `python/` | Python renderer: `renderer.py`, `sources.py`, `mic.py`. |
 | `touchbar.default.json` | The default Touch Bar config, shared: compiled into the Rust binary, read by Python. |

@@ -15,6 +15,7 @@ use chrono::format::{Item, StrftimeItems};
 use chrono::{DateTime, FixedOffset, Local, NaiveDateTime, TimeZone, Utc};
 use serde_json::Value;
 
+use crate::backend::providers::{COMMAND_TIMEOUT, MEDIA_STATUS, MEDIA_WATCH, provider_has_data, usage_dir};
 use crate::config::{Config, Layer, Rgb, Spec, hex_rgb, int, lerp_rgb, num, rgb, text, truthy};
 use crate::mic::{Mic, MicFd};
 use crate::proc::{kill, popen, reap, shell};
@@ -33,28 +34,7 @@ const VISIBLE_WIDTH: i32 = 2060;
 const KEY_WIDTH: i64 = 140; // default width of Esc and buttons
 const KEY_PAD: i32 = 4; // inset of each key face inside its slot
 const DIM: f64 = 0.25; // brightness multiplier while idle
-const COMMAND_TIMEOUT: f64 = 10.0; // kill a command widget's script after this long
 const AGENTS_TOGGLE: &str = "omarchy-shell -q omarchy.agents toggle";
-fn usage_dir() -> PathBuf {
-    std::env::var_os("XDG_STATE_HOME").filter(|v| !v.is_empty())
-        .map_or_else(|| home().join(".local/state"), PathBuf::from)
-        .join("omarchy/agents/usage")
-}
-
-// Match the Omarchy panel's providerHasData, including its validated balance.
-fn provider_has_data(record: &Value) -> bool {
-    if !record.get("id").is_some_and(|id| id.as_str().is_some_and(|s| !s.is_empty())) {
-        return false;
-    }
-    let positive = ["totalPrompts", "totalSessions", "activeDays", "todayPrompts", "todaySessions"]
-        .iter().any(|key| record.get(key).and_then(|v| v.as_f64().or_else(|| v.as_str()?.parse().ok()))
-            .is_some_and(|n| n.is_finite() && n > 0.0));
-    let limits = record.get("limits").and_then(Value::as_array).is_some_and(|l| !l.is_empty());
-    let balance = record.get("balance").filter(|b| b.is_object()).and_then(|b| b.get("remaining"))
-        .and_then(|v| v.as_f64().or_else(|| v.as_str()?.parse().ok()))
-        .is_some_and(|n| n.is_finite() && n >= 0.0);
-    positive || limits || balance
-}
 const USAGE_ICON: &str = "\u{F16A3}"; // the Omarchy bar's agents glyph (Nerd Font)
 const METER_ALARM: f64 = 0.9; // turn red at this fraction used, like the bar panel
 const SHORT_LABELS: [(&str, &str); 3] = [("Session", "5h"), ("5h window", "5h"), ("Weekly", "7d")]; // agents widget, stacked layout
@@ -62,14 +42,7 @@ const STACKED_FONT: f64 = 14.0;
 const RESET_COLOR: Rgb = [160.0, 160.0, 160.0]; // agents widget: when each limit resets
 const ACTIVITY: &str = "omarchy-launch-or-focus-tui btop"; // what Super+Ctrl+T opens
 const MIC_TOGGLE: &str = "omarchy-audio-input-mute"; // what the mic-mute key runs (with OSD)
-const MEDIA_STATUS: &str = "omarchy-shell media status"; // the bar's own player selection, as JSON
 // Players announce changes over MPRIS; re-read the status when they do.
-const MEDIA_WATCH: [&str; 4] = [
-    "dbus-monitor",
-    "--session",
-    "type='signal',path='/org/mpris/MediaPlayer2',interface='org.freedesktop.DBus.Properties'",
-    "type='signal',interface='org.freedesktop.DBus',member='NameOwnerChanged',arg0namespace='org.mpris.MediaPlayer2'",
-];
 const ICON_MIC: &str = "\u{F036C}";
 const ICON_MIC_MUTED: &str = "\u{F036D}";
 const ICON_PREVIOUS: &str = "\u{F04AE}";
@@ -85,7 +58,7 @@ const GLYPHS: [(char, [&str; 7]); 3] = [
     ('c', ["     ", "     ", " ### ", "#    ", "#    ", "#   #", " ### "]),
 ];
 
-fn home() -> PathBuf {
+pub fn home() -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)
 }
 

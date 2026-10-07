@@ -1,0 +1,10 @@
+[Unit]
+Description=omarchy-glance backend socket
+
+[Socket]
+ListenStream=%t/omarchy-glance/backend.sock
+SocketMode=0600
+DirectoryMode=0700
+
+[Install]
+WantedBy=sockets.target

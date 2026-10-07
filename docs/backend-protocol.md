@@ -4,8 +4,8 @@ Task T02 of [multi-output-tasks.md](multi-output-tasks.md). The backend service
 and its output clients (the Touch Bar client first, a desktop client later)
 talk over this protocol; see [ADR 0001](adr/0001-multiple-output-architecture.md)
 for the architecture and [widget-inventory.md](widget-inventory.md) for the
-widgets it carries. This is a specification for T03 and T04; nothing
-implements it yet. Decisions marked **(approved)** settle open questions from
+widgets it carries. The backend side is implemented in `src/backend/` (T03);
+the Touch Bar client follows in T04. Decisions marked **(approved)** settle open questions from
 the inventory; the user approved them on 2026-10-06.
 
 ## Principles
@@ -80,6 +80,7 @@ connection as a whole.
 | `bad_message` | no | Not valid JSON, not an object, missing or wrong-typed fields, or unknown type |
 | `too_large` | yes | Line over 1 MiB |
 | `unsupported_protocol` | yes | The client's protocol major isn't 1 |
+| `unsupported_output` | yes | The `output` isn't one this backend serves (`desktop` arrives with T08) |
 | `not_ready` | no | A request before `hello` |
 | `unknown_widget` | no | No such widget key in the client's current config generation |
 | `stale_config` | no | The request names an older config generation |
@@ -128,9 +129,9 @@ backend replaces an overflowing update queue.
 {"type":"snapshot","rev":1,
  "config":{"generation":3,"path":"~/.config/omarchy-glance/touchbar.json","error":null},
  "settings":{"colors":{"background":"#000000","key":"#303030","keyPressed":"#808080",
-             "text":"#ffffff","urgent":"#e05a5a"},
+             "text":"#ffffff","urgent":"#e05a5a","debugBackground":"#106090","debugBackgroundFn":"#602090"},
              "font":"JetBrainsMono Nerd Font","idleDimSeconds":0,
-             "debug":{"background":false,"border":false,"testPattern":false}},
+             "debug":{"background":false,"border":false,"testPattern":false},"hasFn":true},
  "widgets":[
    {"key":"default.left.0","id":"glance.esc","kind":"esc","layer":"default","section":"left",
     "supported":true,"options":{},"action":{"key":"esc"},"state":{}},
@@ -160,7 +161,7 @@ Widget fields:
 | `layer`, `section` | `default` or `fn`; `left`, `center` or `right`. |
 | `supported` | `false` for a widget this output can't show, with `"reason"` (see the example below). The client gives it no space. |
 | `options` | The widget's config object without `exec` and `onTap`: presentation options, plus provider options the client can ignore. |
-| `action` | What a press does: `{"press": true, "repeat": bool}` for a backend action, `{"key": "f1"}` for a key the client taps itself (Touch Bar only), `{"zones": ["previous","playPause","next","title"]}` for media, or `null`. |
+| `action` | What a press does: `{"press": true, "repeat": bool}` for a backend action, `{"key": "f1", "repeat": bool}` for a key the client taps (and repeats) itself (Touch Bar only; Esc is `{"key": "esc", "repeat": false}`), `{"zones": [...]}` for media (`previous`, `playPause`, `next`, and `title` only when the widget has an `onTap`), or `null`. |
 | `state` | The widget's data (below). |
 
 ### Widget state
@@ -231,7 +232,7 @@ and runs providers by today's rules:
 | --- | --- |
 | Graphs, commands, agent records and refresh jobs | any session's config has the widget (including hidden layers, so history stays continuous) |
 | Media status polling | a media widget is on a shown layer of some session (`dbus-monitor` while any session has one) |
-| Mic level capture | a mic widget with `waveform` is on a shown layer of some session, another app is recording, and the mic is live |
+| Mic level capture | a mic widget with `waveform` is on a shown layer of some session, another app is recording, and the mic is live (the renderer captured even with `waveform: false`; the backend doesn't) |
 | Mic mute/recording state | any session's config has a mic widget |
 
 Sessions share providers when the widget id and its provider options match
@@ -249,8 +250,10 @@ backend assumes `{"layer":"default","shown":true}`.
 - Replies (`ack`, `error`) and snapshots are queued in order. If more than
   256 replies wait unsent, the client isn't reading: `queue_overflow`, and
   the connection closes.
-- If a session's unsent data passes 4 MiB (e.g. a stuck client during config
-  reloads), the backend drops it and sends one fresh snapshot instead.
+- The server hands a client new lines only once everything before them has
+  been written to its socket, so at most one batch (queued replies, one
+  snapshot, one update) waits per client. Snapshots coalesce too: a resync or
+  reload while one is queued doesn't queue another.
 - All backend sockets are non-blocking. A client that hasn't read anything
   for 10 s while data is waiting is disconnected. Nothing a client does blocks
   the backend's loop or other sessions.
@@ -379,10 +382,12 @@ process. They exchange the same messages over an in-memory channel instead of
 the socket, so the preview exercises the protocol code. The golden tests
 inject fixed provider data on the backend side.
 
-## Traffic estimate
+## Traffic
 
-To measure in T03, per the ADR. Estimate for the default Touch Bar config:
-two graphs a second (about 400 bytes each), a waveform update 20 times a
-second while recording (about 600 bytes), and occasional command, media and
-agents updates. That's under 15 KB/s at the peak, small enough that cheaper
-encodings aren't needed.
+Measured 2026-10-07 with a test client on the built-in default config: each
+graph sends one update a second, growing to about 500 bytes once its history
+is full (values are sent at full precision); the first seconds measured 0.6 to
+1.9 KB/s including agents and media. A waveform update while recording is
+estimated at about 600 bytes 20 times a second. The peak stays well under
+15 KB/s, so cheaper encodings aren't needed. Rounding sample values would
+roughly halve graph traffic if it ever matters.

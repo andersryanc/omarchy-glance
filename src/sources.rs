@@ -104,6 +104,7 @@ pub struct Source {
     temp_path: Option<String>,
     device: Option<String>, // gpu device dir, disk name, battery dir, fan input
     pub fixed_icon: Option<String>, // battery label instead of reading the battery (golden tests)
+    pub battery: Option<(i64, String)>, // charge % and status from the last battery sample
 }
 
 impl Source {
@@ -118,6 +119,7 @@ impl Source {
             temp_path: None,
             device: None,
             fixed_icon: None,
+            battery: None,
         }
     }
 
@@ -427,6 +429,7 @@ impl Source {
         };
         let watts = current * volts;
         let low = status == "Discharging" && capacity <= int(&self.spec, "low", 15);
+        self.battery = Some((capacity, status.clone()));
         self.lines = vec![(format!("{capacity}%"), low)];
         match text(&self.spec, "detail", "none").as_str() {
             "power" => self.lines.push((format!("{watts:.1}W"), false)),

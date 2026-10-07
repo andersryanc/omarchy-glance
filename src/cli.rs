@@ -10,7 +10,7 @@ use std::process::Command;
 use crate::renderer::{DEFAULT_CONFIG, user_config};
 
 pub const USAGE: &str =
-    "usage: omarchy-glance [on [python]|off|restart|status|log|config [edit]|--preview out.png [fn]]";
+    "usage: omarchy-glance [on [python]|off|restart|status|log|config [edit]|backend|--preview out.png [fn]]";
 
 /// The Python renderer in the checkout this binary was built from; removed in T05.
 const PYTHON: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/python/renderer.py");

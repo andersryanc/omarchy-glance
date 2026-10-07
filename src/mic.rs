@@ -37,6 +37,7 @@ pub struct Mic {
     wanted: bool,      // a mic widget is on screen; levels are only captured then
 }
 
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum MicFd {
     Events,
     Audio,

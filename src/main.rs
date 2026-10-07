@@ -7,11 +7,13 @@
 //! A config has two layers, "default" and "fn" (shown while Fn is held), each
 //! with left/center/right lists of widgets, like the Omarchy bar's shell.json.
 
+mod backend;
 mod cli;
 mod config;
 mod mic;
 mod proc;
 mod proto;
+mod protocol;
 mod renderer;
 mod sources;
 
@@ -37,6 +39,7 @@ fn main() {
             let path = args.get(1).map_or("preview.png", String::as_str);
             renderer::Renderer::new(None).preview(path, args.get(2).is_some_and(|a| a == "fn"))
         }
+        Some("backend") => backend::server::run(),
         Some(_) => cli::run(&args).unwrap_or_else(|| Err(cli::USAGE.into())),
         None => proto::Conn::connect(proto::SOCK_PATH)
             .map_err(|e| format!("{}: {e}", proto::SOCK_PATH))

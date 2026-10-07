@@ -480,3 +480,29 @@ fn stuck_client_is_dropped_without_holding_up_others() {
     assert_eq!(ts.server.client_count(), 1, "the stuck client was dropped");
     assert_eq!(ts.server.backend.sessions.len(), 1);
 }
+
+#[test]
+fn stuck_client_with_a_due_update_does_not_spin() {
+    let spacers: Vec<Value> = (0..400).map(|i| json!({"id": "glance.spacer", "size": i, "note": "x".repeat(100)})).collect();
+    let mut ts = TestServer::new("spin", json!({"default": {"left": spacers}}));
+    ts.server.stale_seconds = 10.0;
+    let (mut stuck, _never_read) = ts.client();
+    stuck.write_all(HELLO).unwrap();
+    stuck.set_nonblocking(true).unwrap();
+    // Resync until a snapshot waits behind a full socket.
+    let start = Instant::now();
+    while ts.server.backend.sessions.values().all(|s| s.out.is_empty()) {
+        assert!(start.elapsed() < Duration::from_secs(3), "the socket never filled");
+        let _ = stuck.write_all(b"{\"type\":\"resync\",\"id\":10}\n");
+        ts.server.step(0.01).unwrap();
+    }
+    for s in ts.server.backend.sessions.values_mut() {
+        s.dirty.insert("default.left.0".into());
+        s.last_update = 0.0;
+    }
+    let start = Instant::now();
+    for _ in 0..5 {
+        ts.server.step(0.05).unwrap();
+    }
+    assert!(start.elapsed() >= Duration::from_millis(200), "polled without waiting: {:?}", start.elapsed());
+}

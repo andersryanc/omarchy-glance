@@ -130,7 +130,8 @@ impl Server {
 
         let mut deadline = self.backend.deadline().min(t + max_wait);
         for c in self.clients.values() {
-            if let Some(due) = self.backend.update_due(c.session) {
+            // An update can't go out until the client takes what it has.
+            if c.wbuf.is_empty() && let Some(due) = self.backend.update_due(c.session) {
                 deadline = deadline.min(due);
             }
             if let Some(since) = c.stuck_since {

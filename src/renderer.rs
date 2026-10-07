@@ -500,6 +500,11 @@ impl Renderer {
         self.free.clear();
         self.last_frame = None;
         self.fn_held = false;
+        // The backend outlives this, so it must hear the lifts it will never see.
+        let held: Vec<u8> = self.pointers.drain().collect();
+        for cid in held {
+            self.request(json!({"type": "release", "pointer": cid}));
+        }
         self.end_touches();
         let (_, delay) = self.hw_retry;
         self.hw_retry = (t + delay, (delay * 2.0).min(RETRY_MAX));

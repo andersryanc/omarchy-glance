@@ -140,3 +140,17 @@ fn missed_update_resyncs_and_lost_backend_shows_offline() {
     let surface = ImageSurface::create(Format::Rgb24, 2170, 60).unwrap();
     c.r.draw(&surface, None); // the disconnected state
 }
+
+#[test]
+fn lost_hardware_releases_held_presses() {
+    let mut c = Client::new("hwloss", json!({"default": {"left": [
+        {"id": "up", "type": "button", "label": "+", "exec": "true", "repeat": true}
+    ]}}));
+    c.replies();
+    c.touch(&[(1, c.x_of("default.left.0"))]);
+    assert_eq!(c.replies()[0]["type"], "ack");
+    c.r.lost_hw(now(), "test");
+    assert_eq!(c.replies()[0]["type"], "ack"); // the release: the backend still held pointer 1
+    c.touch(&[]);
+    assert!(c.replies().is_empty()); // nothing left to release
+}

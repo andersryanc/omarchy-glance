@@ -42,10 +42,10 @@ waiting for a yes or no.
 
 ## Bugs
 
-- [ ] Agents widget, `"layout": "row"`: a narrow `meterWidth` (e.g. 110) makes
-      the label, reset time and percentage overlap, because they're drawn
-      along the meter without checking for room. Found 2026-10-06 while
-      building the golden-test config; to review.
+- [x] Agents widget, `"layout": "row"`: a narrow `meterWidth` (e.g. 110) made
+      the label, reset time and percentage overlap. Fixed 2026-10-07: the
+      text shortens to fit, one choice per widget (short labels, then no
+      percent, then no reset time).
 
 ## Proposed
 

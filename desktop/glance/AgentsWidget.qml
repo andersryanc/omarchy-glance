@@ -42,6 +42,12 @@ Face {
     onTriggered: { root.now = new Date(); interval = 60000; restart() }
   }
 
+  readonly property int rowFit: {
+    let fit = 0
+    for (let i = 0; i < rowRepeater.count; i++) fit = Math.max(fit, rowRepeater.itemAt(i)?.ownFit ?? 0)
+    return fit
+  }
+
   function alarm(l) { return l.fraction !== null && l.fraction !== undefined && l.fraction >= 0.9 }
 
   Image {
@@ -64,7 +70,7 @@ Face {
     font.pixelSize: root.iconSize
   }
 
-  // "row": per limit, its name and reset time over a meter, the percent at the right.
+  // "row": per limit, its name over a meter, the reset time and percent at the right.
   Row {
     id: rowBlock
     visible: !root.stacked
@@ -72,39 +78,62 @@ Face {
     anchors.verticalCenter: parent.verticalCenter
     spacing: root.view.px(18)
     Repeater {
+      id: rowRepeater
       model: root.stacked ? [] : root.limits
       Column {
         id: lim
         required property var modelData
         width: root.meterW
         spacing: root.view.px(5)
+        // Fitted to the meter's width: the full label, then the short label,
+        // then without the percent (the meter shows it), then without the reset
+        // time. The widget uses the narrowest meter's choice so its meters match.
+        readonly property string fullLabel: modelData.label.split(" (")[0]
+        readonly property string shortLabel: Util.shortLabel(root.o, modelData.label)
+        readonly property string reset: Util.resetText(root.o, modelData.resetsAt, root.now)
+        readonly property real sp: root.view.px(6)
+        function need(labelW, withReset, withPct) {
+          return labelW + (withReset && reset !== "" ? sp + resetM.advanceWidth : 0) + (withPct ? sp + pct.implicitWidth : 0)
+        }
+        // The reset time and percent shown at the right, with the gap before them.
+        readonly property real rightW: (root.rowFit < 3 && reset !== "" ? sp + resetM.advanceWidth : 0)
+                                     + (root.rowFit < 2 ? sp + pct.implicitWidth : 0)
+        readonly property int ownFit: need(fullM.advanceWidth, true, true) <= width ? 0
+                                 : need(shortM.advanceWidth, true, true) <= width ? 1
+                                 : need(shortM.advanceWidth, true, false) <= width ? 2 : 3
+        TextMetrics { id: fullM; font.family: root.host.fontFamily; font.pixelSize: root.small; text: lim.fullLabel }
+        TextMetrics { id: shortM; font.family: root.host.fontFamily; font.pixelSize: root.small; text: lim.shortLabel }
+        TextMetrics { id: resetM; font.family: root.host.fontFamily; font.pixelSize: root.small; text: lim.reset }
+        // The label at the left; the reset time and percent at the right.
         Item {
           width: parent.width
           height: pct.implicitHeight
-          Row {
-            width: parent.width - pct.implicitWidth - root.view.px(6)
+          Text {
+            width: parent.width - lim.rightW
             clip: true
-            spacing: root.view.px(6)
+            text: root.rowFit === 0 ? lim.fullLabel : lim.shortLabel
+            color: root.host.foreground
+            font.family: root.host.fontFamily
+            font.pixelSize: root.small
+          }
+          Row {
+            anchors.right: parent.right
+            spacing: lim.sp
             Text {
-              text: lim.modelData.label.split(" (")[0]
-              color: root.host.foreground
-              font.family: root.host.fontFamily
-              font.pixelSize: root.small
-            }
-            Text {
-              text: Util.resetText(root.o, lim.modelData.resetsAt, root.now)
+              visible: root.rowFit < 3 && lim.reset !== ""
+              text: lim.reset
               color: root.host.muted
               font.family: root.host.fontFamily
               font.pixelSize: root.small
             }
-          }
-          Text {
-            id: pct
-            anchors.right: parent.right
-            text: Util.percent(lim.modelData.fraction)
-            color: root.alarm(lim.modelData) ? root.host.urgent : root.host.foreground
-            font.family: root.host.fontFamily
-            font.pixelSize: root.small
+            Text {
+              id: pct
+              visible: root.rowFit < 2
+              text: Util.percent(lim.modelData.fraction)
+              color: root.alarm(lim.modelData) ? root.host.urgent : root.host.foreground
+              font.family: root.host.fontFamily
+              font.pixelSize: root.small
+            }
           }
         }
         Meter { host: root.host; width: parent.width; fraction: lim.modelData.fraction; urgent: root.alarm(lim.modelData) }

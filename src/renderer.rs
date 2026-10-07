@@ -40,7 +40,7 @@ const KEY_PAD: i32 = 4; // inset of each key face inside its slot
 const DIM: f64 = 0.25; // brightness multiplier while idle
 const USAGE_ICON: &str = "\u{F16A3}"; // the Omarchy bar's agents glyph (Nerd Font)
 const METER_ALARM: f64 = 0.9; // turn red at this fraction used, like the bar panel
-const SHORT_LABELS: [(&str, &str); 3] = [("Session", "5h"), ("5h window", "5h"), ("Weekly", "7d")]; // agents widget, stacked layout
+const SHORT_LABELS: [(&str, &str); 3] = [("Session", "5h"), ("5h window", "5h"), ("Weekly", "7d")]; // agents widget: stacked layout, narrow row meters
 const STACKED_FONT: f64 = 14.0;
 const RESET_COLOR: Rgb = [160.0, 160.0, 160.0]; // agents widget: when each limit resets
 const ICON_MIC: &str = "\u{F036C}";
@@ -806,7 +806,7 @@ impl Renderer {
         ["Session", "Weekly"].iter().map(|l| Limit { label: l.to_string(), frac: None, resets: None }).collect()
     }
 
-    /// Stacked layout labels: "Session" -> "5h", "Weekly" -> "7d", or `shortLabels`.
+    /// Short limit labels: "Session" -> "5h", "Weekly" -> "7d", or `shortLabels`.
     fn short_label(w: &Widget, label: &str) -> String {
         if let Some(v) = w.spec.get("shortLabels").and_then(|m| m.get(label)) {
             return v.as_str().map_or_else(|| v.to_string(), String::from);
@@ -815,6 +815,36 @@ impl Renderer {
             return short.to_string();
         }
         label.chars().take(1).collect::<String>().to_lowercase()
+    }
+
+    /// How much of the row layout's text fits above every meter: 0 the full
+    /// label, 1 the short label, 2 also without the percent (the meter shows
+    /// it), 3 also without the reset time. The widget uses one level so its
+    /// meters match.
+    fn row_fit(cr: &Context, w: &Widget, rows: &[(String, String, String)], width: f64) -> u8 {
+        let fits = |label: &str, reset: &str, pct: &str| {
+            let mut t = extents(cr, label).x_advance();
+            if !reset.is_empty() {
+                t += extents(cr, &format!("  {reset}")).x_advance();
+            }
+            if !pct.is_empty() {
+                t += 6.0 + extents(cr, pct).x_advance();
+            }
+            t <= width
+        };
+        let level = |(label, reset, pct): &(String, String, String)| {
+            let short = Self::short_label(w, label);
+            if fits(label, reset, pct) {
+                0
+            } else if fits(&short, reset, pct) {
+                1
+            } else if fits(&short, reset, "") {
+                2
+            } else {
+                3
+            }
+        };
+        rows.iter().map(level).max().unwrap_or(0)
     }
 
     /// Widths of the label, percent and reset columns in the stacked layout.
@@ -1172,20 +1202,34 @@ impl Renderer {
         self.draw_provider_icon(cr, w, x0 + 14.0 + icon_w / 2.0, f64::from(self.short) / 2.0);
         cr.set_font_size(15.0);
         let mut x = x0 + 14.0 + icon_w + 14.0;
-        for l in self.limits_for(w) {
+        let limits = self.limits_for(w);
+        let rows: Vec<(String, String, String)> = limits
+            .iter()
+            .map(|l| {
+                let pct = l.frac.map_or("—".to_string(), |f| format!("{}%", round_even(f * 100.0)));
+                (l.label.clone(), reset_text(w, l.resets, self.clock), pct)
+            })
+            .collect();
+        let fit = Self::row_fit(cr, w, &rows, meter_w);
+        for (l, (label, reset, pct)) in limits.iter().zip(&rows) {
             let alarm = l.frac.is_some_and(|f| f >= METER_ALARM);
             self.set_color(cr, white, 1.0);
             cr.move_to(x, 25.0);
-            let _ = cr.show_text(&l.label);
-            let reset = reset_text(w, l.resets, self.clock);
-            if !reset.is_empty() {
-                self.set_color(cr, RESET_COLOR, 1.0);
-                let _ = cr.show_text(&format!("  {reset}"));
+            let _ = cr.show_text(&if fit == 0 { label.clone() } else { Self::short_label(w, label) });
+            // The reset time and percent at the right end.
+            let mut right = x + meter_w;
+            if fit < 2 {
+                right -= extents(cr, pct).x_advance();
+                self.set_color(cr, if alarm { urgent } else { white }, 1.0);
+                cr.move_to(right, 25.0);
+                let _ = cr.show_text(pct);
+                right -= 6.0;
             }
-            let pct = l.frac.map_or("—".to_string(), |f| format!("{}%", round_even(f * 100.0)));
-            self.set_color(cr, if alarm { urgent } else { white }, 1.0);
-            cr.move_to(x + meter_w - extents(cr, &pct).x_advance(), 25.0);
-            let _ = cr.show_text(&pct);
+            if fit < 3 && !reset.is_empty() {
+                self.set_color(cr, RESET_COLOR, 1.0);
+                cr.move_to(right - extents(cr, reset).x_advance(), 25.0);
+                let _ = cr.show_text(reset);
+            }
             Self::rounded_rect(cr, x, 33.0, meter_w, 10.0, 5.0);
             self.set_color(cr, white, 0.2);
             let _ = cr.fill();

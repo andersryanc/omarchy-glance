@@ -65,11 +65,16 @@ for review. Dependencies: none.
 
 ### T02 — Specify the backend protocol
 
-- [ ] Document framing, handshake (version, output type, capabilities),
+- [x] Document framing, handshake (version, output type, capabilities),
   snapshot and revisioned updates, widget/session IDs, press/release/activate,
   acknowledgements and errors, demand, disconnect cleanup, and resync.
-- [ ] Define per-client queue limits and coalescing.
-- [ ] Define socket location, permissions, and socket activation.
+- [x] Define per-client queue limits and coalescing.
+- [x] Define socket location, permissions, and socket activation.
+
+Result: [backend-protocol.md](backend-protocol.md). It resolves the T01 open
+questions on shared providers, history length, repeat timings and the battery
+icon as proposals for review, and uses newline-delimited rather than
+length-prefixed JSON for the QML client.
 
 Acceptance: worked examples cover connect, update, press/hold/release,
 disconnect mid-press, backend restart, and an unsupported widget. Clients

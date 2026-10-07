@@ -141,10 +141,12 @@ The protocol provides:
 - Bounded per-client queues with coalescing, so a slow client cannot stall the
   backend or other clients.
 
-Start with simple length-prefixed JSON messages and measure graph and waveform
-traffic (the waveform runs at 20 levels per second) before considering anything
-cheaper. Document framing, ordering, errors, and version compatibility in
-`docs/` before the desktop client relies on it.
+Start with simple JSON messages, one per line (newline-delimited rather than
+length-prefixed, so that Quickshell's `Socket` and `SplitParser` can read them
+in QML), and measure graph and waveform traffic (the waveform runs at 20
+levels per second) before considering anything cheaper. Framing, ordering,
+errors, and version compatibility are specified in
+[`../backend-protocol.md`](../backend-protocol.md).
 
 ## Process lifecycle
 

@@ -21,9 +21,12 @@ ShellRoot {
   }
   FloatingWindow {
     implicitWidth: Number(Quickshell.env("GLANCE_WIDTH") || 1440)
-    implicitHeight: Number(Quickshell.env("GLANCE_HEIGHT") || 39) * env.scale
+    implicitHeight: Number(Quickshell.env("GLANCE_HEIGHT") || 39) * env.scale + 40
     color: "black"
-    GlanceRow { id: glance; anchors.fill: parent; host: env; client: glanceClient }
+    // Offscreen, the pointer sits near the window's corner; keep the row
+    // clear of it so nothing shows as hovered.
+    GlanceRow { id: glance; anchors { fill: parent; topMargin: 40 } host: env; client: glanceClient
+                showErrorDetail: Quickshell.env("GLANCE_ERROR_DETAIL") === "1" }
   }
   Timer {
     interval: 3500

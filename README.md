@@ -342,8 +342,10 @@ It has its own file, `~/.config/omarchy-glance/desktop.json`, or
 `desktop.default.json` in this directory when that doesn't exist; create a
 copy with `omarchy-glance config desktop`. Like `touchbar.json` it replaces
 the default entirely and reloads within a second of being saved. An invalid
-`desktop.json` only affects the row (the backend logs why and keeps its
-previous config, or the default); the Touch Bar keeps running its own.
+`desktop.json` only affects the row: the backend logs why and keeps its
+previous config (or the default), and the row shows a red "config error"
+marker at its left end until the file parses again; hover it for the
+reason, such as the line and column. The Touch Bar keeps running its own.
 
 ```json
 {

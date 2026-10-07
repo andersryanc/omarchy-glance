@@ -130,7 +130,11 @@ width without touching the desktop.
   new session with full state; graph history restarts empty, as on the Touch
   Bar.
 - **Config errors:** `configError` holds the backend's parse error while it
-  keeps serving the previous config.
+  keeps serving the previous config. `GlanceRow` then shows a red
+  "config error" marker at its left end (the widgets move right to make
+  room); hovering it widens it over the row to show `desktop.json: <error>
+  (showing the last good config)`. `showErrorDetail` expands it without
+  hovering, for checks.
 
 Quickshell logs a warning for each failed connection attempt (at most every
 2 s while the backend can't be started); there's no way to silence it from

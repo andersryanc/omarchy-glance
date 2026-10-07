@@ -27,6 +27,8 @@ Item {
   // Unsupported widgets take no space.
   readonly property var widgets: row.client.widgets.filter(w => w.layer === row.client.layer && w.supported)
   property int dropped: 0 // widgets left out for lack of space, for hosts and checks
+  property bool showErrorDetail: false // expand the config error marker without hovering (checks)
+  readonly property bool configError: row.client.status === "ready" && row.client.configError !== ""
 
   Rectangle {
     anchors.fill: parent
@@ -39,6 +41,7 @@ Item {
   onWidthChanged: relayout()
   onWidgetsChanged: relayout()
 
+  onConfigErrorChanged: relayout()
   function layout() {
     const avail = area.width
     const items = []
@@ -90,6 +93,7 @@ Item {
     id: area
     anchors.fill: parent
     anchors.margins: row.gap
+    anchors.leftMargin: row.gap + (row.configError ? errorMarker.collapsedWidth + row.gap : 0)
     visible: row.client.status === "ready"
 
     Repeater {
@@ -107,6 +111,44 @@ Item {
       }
       onItemAdded: row.relayout()
     }
+  }
+
+  // While the config file doesn't parse, the backend keeps the previous
+  // config; a red marker says so, and hovering it shows why, over the row.
+  Rectangle {
+    id: errorMarker
+    readonly property real pad: 8 * row.host.scale
+    readonly property real collapsedWidth: shortText.implicitWidth + 2 * pad
+    readonly property bool expanded: errorArea.containsMouse || row.showErrorDetail
+    visible: row.configError
+    z: 1
+    x: row.gap
+    y: row.gap
+    height: row.height - 2 * row.gap
+    width: expanded ? Math.min(row.width - 2 * row.gap, longText.implicitWidth + 2 * pad) : collapsedWidth
+    radius: 6 * row.host.scale
+    color: row.host.urgent
+    Text {
+      id: shortText
+      visible: !errorMarker.expanded
+      anchors.centerIn: parent
+      text: "\u{F0026} config error"
+      color: row.host.background
+      font.family: row.host.fontFamily
+      font.pixelSize: row.host.fontSize
+    }
+    Text {
+      id: longText
+      visible: errorMarker.expanded
+      anchors { left: parent.left; right: parent.right; leftMargin: errorMarker.pad; rightMargin: errorMarker.pad }
+      anchors.verticalCenter: parent.verticalCenter
+      elide: Text.ElideRight
+      text: "\u{F0026} " + row.client.output + ".json: " + row.client.configError + " (showing the last good config)"
+      color: row.host.background
+      font.family: row.host.fontFamily
+      font.pixelSize: row.host.fontSize
+    }
+    MouseArea { id: errorArea; anchors.fill: parent; hoverEnabled: true }
   }
 
   Text {

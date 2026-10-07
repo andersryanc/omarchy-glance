@@ -114,18 +114,20 @@ Face {
     visible: root.stacked
     x: root.pad + root.iconSize + root.gap
     anchors.verticalCenter: parent.verticalCenter
-    spacing: root.view.px(2)
+    spacing: 0
     Repeater {
       model: root.stacked ? root.limits : []
       Row {
         id: line
         required property var modelData
         spacing: root.view.px(8)
+        height: Math.ceil(root.small * 1.15) // tighter than the font's line box, so the lines sit closer
         Text {
           width: labelW.advanceWidth
           text: Util.shortLabel(root.o, line.modelData.label)
           color: root.host.foreground
           font.family: root.host.fontFamily; font.pixelSize: root.small
+          height: parent.height; verticalAlignment: Text.AlignVCenter
         }
         Meter {
           host: root.host
@@ -140,6 +142,7 @@ Face {
           text: Util.percent(line.modelData.fraction)
           color: root.alarm(line.modelData) ? root.host.urgent : root.host.foreground
           font.family: root.host.fontFamily; font.pixelSize: root.small
+          height: parent.height; verticalAlignment: Text.AlignVCenter
         }
         Text {
           visible: resetW.text !== ""
@@ -147,6 +150,7 @@ Face {
           text: Util.resetText(root.o, line.modelData.resetsAt, root.now)
           color: root.host.muted
           font.family: root.host.fontFamily; font.pixelSize: root.small
+          height: parent.height; verticalAlignment: Text.AlignVCenter
         }
       }
     }

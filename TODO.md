@@ -18,14 +18,24 @@ waiting for a yes or no.
       records: `touchbar.mic` (2026-10-04)
 - [x] Keyboard backlight: button snippets in the README (2026-10-04)
 
+## Approved
+
+### Backend and desktop outputs ([ADR 0001](docs/adr/0001-multiple-output-architecture.md), [tasks](docs/multi-output-tasks.md))
+
+- [ ] Stage 0: rename the project to `omarchy-glance`, with the Touch Bar config
+      at `~/.config/omarchy-glance/touchbar.json` (R01).
+- [ ] Stage 1: split out a backend service; the Touch Bar renderer becomes its
+      first client and must match current behavior and appearance (T00–T04).
+- [ ] Retire the Python renderer once the Touch Bar client is proven (T05;
+      confirm before deleting `python/`).
+- [ ] Stage 2: spike standalone Quickshell vs Omarchy panel-plugin hosts (T06).
+- [ ] Stage 3: desktop renderer for machines without a Touch Bar (T07–T11).
+
 ## Proposed
 
-### Architecture and desktop outputs
+### Desktop outputs
 
-- [ ] Implement the shared-core and standalone-panel migration described in
-      [ADR 0001](docs/adr/0001-multiple-output-architecture.md), following the
-      [staged tasks and acceptance criteria](docs/multi-output-tasks.md).
-- [ ] Explore a supported native Omarchy second-row extension (tasks T12–T13);
+- [ ] Explore a supported native Omarchy second-row extension (T12–T13);
       reuse the desktop controls rather than fork the system bar.
 
 ### Controls

@@ -46,10 +46,10 @@ its built-in bar.
 
 ## Repository layout
 
-The planned desktop panel and native second-row architecture is documented in
+A planned split into a backend service with Touch Bar and desktop clients (for
+machines without a Touch Bar) is documented in
 [ADR 0001](docs/adr/0001-multiple-output-architecture.md), with
-[implementation tasks](docs/multi-output-tasks.md). These outputs are not yet
-implemented.
+[implementation tasks](docs/multi-output-tasks.md). It is not yet implemented.
 
 | Path | |
 |---|---|

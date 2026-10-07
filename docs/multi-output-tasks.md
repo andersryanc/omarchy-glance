@@ -1,197 +1,232 @@
 # Multiple-output implementation tasks
 
 Architecture: [ADR 0001](adr/0001-multiple-output-architecture.md).
-Unchecked items are planned work, not implemented behavior. Complete each stage
-with a working hardware renderer. Proposed features in `TODO.md` are separate
-scope unless explicitly included below.
+Unchecked items are planned work, not implemented behavior. There is no
+backward compatibility: when a task renames or moves something, it also updates
+the user's files and removes the old name. Every stage ends
+with a working Touch Bar. Proposed features in `TODO.md` are separate scope
+unless included below.
 
-## Stage 1: Extract shared behavior
+## Stage 0: Rename to omarchy-glance
 
-### T01 — Define state, identity, and session contracts
+### R01 — Rename the project
 
-- [ ] Inventory current widget state, provider dependencies, actions, and
-  hardware-specific behavior in `renderer.rs`.
-- [ ] Introduce drawing-independent widget state, stable instance identity,
-  semantic input/actions, output capabilities, and session state.
-- [ ] Specify identity across reloads, legacy duplicate widget IDs, layer
-  selection, cancellation, and supported/unsupported actions.
+- [ ] Rename the GitHub repo to `omarchy-glance` and update the local remote;
+  move the checkout to `~/Work/omarchy-glance`.
+- [ ] Rename the crate and binary to `omarchy-glance`, and fold
+  `touchbar-custom` into its subcommands (`on`, `off`, `restart`, `status`,
+  `log`, `config [edit]`); the t1bridge renderer link points at the binary
+  until T04 introduces the wrapper.
+- [ ] Read the user config from `~/.config/omarchy-glance/touchbar.json` only
+  (no fallback to the old path); move the existing
+  `~/.config/touchbar/config.json` there by hand; rename the built-in default
+  to `touchbar.default.json`.
+- [ ] Switch widget IDs to the `glance.` prefix in code, the default config,
+  docs, and the moved user config; drop `touchbar.*` IDs entirely.
+- [ ] Update README, TODO, ADR references, and the Python renderer only as far
+  as needed to keep it working until T05 removes it.
 
-Acceptance: contracts cover every existing widget and default/Fn behavior;
-domain types do not depend on Cairo or QML. Existing config remains accepted.
-Dependencies: none.
+Acceptance: a fresh build from the renamed checkout drives the Touch Bar
+exactly as before with the moved and updated config; no `touchbar.*` widget IDs
+or old paths remain in code or docs. Dependencies: none. Do this before T00 so
+golden images and new names (units, socket, protocol) start out under the new
+name.
 
-### T02 — Extract providers and demand management
+## Stage 1: Backend service with the Touch Bar as first client
 
-- [ ] Move graph history, agent usage, commands, media observation, and
-  microphone state out of drawing code, reusing existing provider modules.
-- [ ] Share collection between sessions and track demand for costly sources.
-- [ ] Preserve usage-based widget hiding and microphone capture conditions.
+### T00 — Regression safety net
 
-Acceptance: hardware state remains equivalent; multiple consumers do not
-duplicate capture; removing the last consumer releases resources. Validate
-provider visibility and mic lifecycle with focused tests.
-Dependencies: T01.
+- [ ] Add a deterministic preview: fixed clock and fixed provider data (graph
+  history, agent usage, media, mic state, command output).
+- [ ] Commit golden PNGs for the default and Fn layers of `config.default.json`
+  and of a config that uses every widget kind.
+- [ ] Record current performance (RSS, CPU, full-frame time) with the same
+  method as the baseline in the Rust-port notes.
 
-### T03 — Extract application rules and config lifecycle
+Acceptance: a test compares preview output to the golden images and fails on
+any pixel difference. Dependencies: none.
 
-- [ ] Move visibility, config reload, action availability, and layer rules into
-  the core, with per-output session state.
-- [ ] Preserve the current hardware Fn/contact layer latch and invalid-config
-  fallback behavior.
-- [ ] Cancel interactions safely when widgets disappear or sessions close.
+### T01 — Inventory widgets and label output support
 
-Acceptance: valid/invalid reloads and independent sessions behave predictably;
-no stale widget ownership or repeating actions after removal.
-Dependencies: T01, T02.
+- [ ] Go through every widget kind, option, and behavior in `renderer.rs` and
+  record which provider it needs, which actions it runs, and what is
+  hardware-specific.
+- [ ] Confirm the draft Touch Bar / desktop labels in the ADR and add them to
+  the README widget table.
+- [ ] List state that each widget needs to draw it, and its presentation options.
 
-### T04 — Centralize actions and adapt hardware presentation
+Acceptance: every widget kind and option is labelled; open questions are listed
+for review. Dependencies: none.
 
-- [ ] Route shell execution, key requests, repeat scheduling, and errors through
-  action adapters.
-- [ ] Make Cairo layout/drawing consume core state and translate physical
-  contacts into semantic input.
-- [ ] Keep t1bridge buffers, submission, physical dimensions, and PNG preview
-  in the hardware/presentation adapters.
+### T02 — Specify the backend protocol
 
-Acceptance: existing buttons, commands, media, graphs, agents, microphone,
-repeats, Fn layer, config reload, and preview still work. Run existing relevant
-tests, compare representative previews, and check real touch interactions.
-Dependencies: T03.
+- [ ] Document framing, handshake (version, output type, capabilities),
+  snapshot and revisioned updates, widget/session IDs, press/release/activate,
+  acknowledgements and errors, demand, disconnect cleanup, and resync.
+- [ ] Define per-client queue limits and coalescing.
+- [ ] Define socket location, permissions, and socket activation.
 
-## Stage 2: Backend interface and lifecycle
+Acceptance: worked examples cover connect, update, press/hold/release,
+disconnect mid-press, backend restart, and an unsupported widget. Clients
+cannot request commands that are not configured. Dependencies: T01.
 
-### T05 — Specify the desktop protocol
+### T03 — Extract the backend service
 
-- [ ] Document framing, version negotiation, snapshots/deltas, revision and
-  widget IDs, session demand, actions, acknowledgements/errors, and reconnect.
-- [ ] Define queue limits/coalescing and user-private socket access.
-- [ ] Specify unavailable providers and unsupported output actions.
+- [ ] Move config loading and reload, providers (graphs, agent usage, commands,
+  media, mic), visibility rules, and action execution out of `renderer.rs` into
+  backend modules with no Cairo dependency.
+- [ ] Implement the socket server inside the existing poll loop, with demand
+  tracking so providers only run for visible, connected clients.
+- [ ] Move hold-to-repeat into the backend; cancel on release, widget removal,
+  config reload, and disconnect.
+- [ ] Add the `backend` mode and systemd user units
+  (`omarchy-glance.service` and `omarchy-glance.socket`).
 
-Acceptance: worked examples cover connect, update, action, disconnect, and
-resync; clients cannot submit arbitrary commands outside configured actions.
-Dependencies: T01, T04.
+Acceptance: a test client receives a snapshot and updates; the last client
+disconnecting stops capture and polling; protocol tests cover malformed
+requests, slow clients, and reconnection. Dependencies: T02.
 
-### T06 — Implement backend service and startup ownership
+### T04 — Turn the renderer into the Touch Bar client
 
-- [ ] Add socket transport and session cleanup without blocking hardware work.
-- [ ] Support desktop-only startup without hardware and simultaneous outputs.
-- [ ] Integrate existing `touchbar-custom`/service ownership; document restart,
-  fallback, logging, and prevention of duplicate backends.
-- [ ] Handle hardware loss, client disconnect, slow clients, and backend restart.
+- [ ] Draw from backend snapshots instead of in-process state; keep layout,
+  Cairo drawing, press feedback, Fn layer and contact latch, idle dimming, and
+  `TapKeys` in the client.
+- [ ] Translate touches into press/release requests for `exec` actions; Esc and
+  F-key buttons tap keys locally.
+- [ ] Reconnect to the backend and to the t1bridge socket instead of exiting;
+  show a clear disconnected state while the backend is unavailable.
+- [ ] Add the `touchbar` mode and the installed t1bridge renderer wrapper that
+  runs it; `preview` runs the backend and client in one process.
 
-Acceptance: two desktop clients share providers; a client failure leaves other
-outputs running; hardware absence permits desktop use. Protocol tests cover
-resync, malformed requests, bounded updates, and resource cleanup.
-Dependencies: T05.
+Acceptance: golden previews match exactly; on hardware, every widget, touch,
+hold-to-repeat, Fn, config reload, and invalid-config fallback behaves as
+before; restarting the backend while the bar runs recovers without falling
+back to the t1bridge built-in renderer. Dependencies: T03.
 
-## Stage 3: Shared desktop presentation
+### T05 — Cut over, measure, and retire Python
 
-### T07 — Build the QML client and host contract
+- [ ] Update the control subcommands and the README for the backend service;
+  remove the hardcoded checkout path where practical.
+- [ ] Compare performance against T00 and record the result.
+- [ ] Remove `python/` and the `on python` option, and drop Python
+  compatibility notes from docs.
 
-- [ ] Implement connection, state updates, action results, and reconnection.
-- [ ] Define host-injected theme, scale, dimensions, orientation, visibility,
-  and transparency without constructing a panel window in shared controls.
-- [ ] Add a small development host for exercising controls without Omarchy.
+Acceptance: a fresh setup following the README gives a working Touch Bar;
+performance is recorded; no Python references remain.
+Dependencies: T04, and a final go-ahead from the user to delete `python/`.
 
-Acceptance: controls can mount in a generic container; backend restart restores
-state and reports disconnected/unavailable status coherently.
-Dependencies: T06.
+## Stage 2: Desktop host spike
 
-### T08 — Implement existing desktop widgets and input mapping
+### T06 — Compare desktop hosts
 
-- [ ] Implement buttons/commands, graphs, agent meters/logos, media, and
-  microphone controls from shared state.
-- [ ] Support responsive left/center/right layout, text truncation, and explicit
-  overflow behavior at narrow widths and large display scales.
-- [ ] Map mouse press/release/hold and layer selection into semantic input;
-  report unavailable keyboard actions.
-- [ ] Add compatible output overrides with documented precedence and examples.
+- [ ] Build a throwaway standalone Quickshell `PanelWindow` with hardcoded
+  content, and the same as an Omarchy third-party `panel` plugin using
+  `PluginBarStateApi`.
+- [ ] For each, check: stacking below the Omarchy bar, including after an
+  `omarchy-shell` restart; clicks that keep focus on the active window;
+  fractional scaling; fullscreen windows; the bar moved to another edge or
+  hidden; monitor hotplug; space released on exit.
+- [ ] Check what theme and transparency data each host can follow.
 
-Acceptance: existing configured widgets work on desktop without duplicating
-providers/actions; hidden agent widgets reclaim space; interactions preserve
-the active application. Hardware config and appearance remain compatible.
-Dependencies: T07.
+Acceptance: a short written comparison with a recommended primary host and
+whether the other is kept as an option. Dependencies: none (can overlap
+Stage 1, but desktop work waits for T05).
 
-## Stage 4: Standalone panel release
+## Stage 3: Desktop renderer
 
-### T09 — Implement layer-shell placement and reservation
+### T07 — QML client and host contract
 
-- [ ] Add the standalone Quickshell host with monitor selection and height.
-- [ ] Place below the existing top bar and reserve additional space without
-  overlap or double-counting. Select and document fullscreen behavior.
-- [ ] Handle monitor removal, scaling, hide/show, and space release on exit.
+- [ ] Implement connection, snapshots and updates, action results, and
+  reconnection in QML.
+- [ ] Define the host environment (palette, font, scale, size, transparency,
+  visibility); shared controls never create their own window.
+- [ ] Add a small development host for working on controls without Omarchy.
 
-Acceptance: normal tiled/maximized windows remain below both rows on the
-selected monitor; other monitors are unaffected; no permanent reservation
-remains after exit. Verify fullscreen and focus behavior on the actual system.
-Dependencies: T08.
+Acceptance: controls mount in a plain container; a backend restart restores
+state and shows a coherent disconnected state. Dependencies: T05, T06.
 
-### T10 — Add theme and optional bar-state synchronization
+### T08 — Desktop configuration
 
-- [ ] Resolve live theme palette/font updates for the standalone host.
-- [ ] Investigate supported access to Omarchy transparency, foreground contrast,
-  hiding, position, and monitor state; implement supported synchronization.
-- [ ] Document gaps and behavior when the system bar moves or is absent.
+- [ ] Add `~/.config/omarchy-glance/desktop.json` and its built-in default:
+  one widget list (left/center/right), presentation settings, monitor and
+  height; colors and font from the host theme unless overridden.
+- [ ] Validate against output labels; log unsupported widgets.
+- [ ] Document it with examples, including a desktop-only config for machines
+  without a Touch Bar.
 
-Acceptance: theme changes update controls without backend restart; supported
-transparency changes affect the panel background. Do not claim exact native
-parity where no supported state interface exists.
-Dependencies: T09.
+Acceptance: an invalid `desktop.json` never affects the Touch Bar; a desktop-only config
+works with no t1bridge installed. Dependencies: T01, T07.
 
-### T11 — Package and validate the standalone mode
+### T09 — Desktop widgets
 
-- [ ] Provide installation, launch/autostart, configuration, troubleshooting,
-  and simultaneous hardware/desktop usage instructions.
-- [ ] Record runtime dependencies and Python fallback support boundaries.
-- [ ] Perform a release smoke check covering widgets, reload, reconnection,
-  reservation, focus, theme, multiple outputs, scaling, and monitor changes.
+- [ ] Implement every widget labelled for desktop: `exec` buttons (with
+  hold-to-repeat), commands, graphs, agents, media, mic, spacer.
+- [ ] Responsive left/center/right layout, text truncation, and defined
+  overflow behavior at narrow widths and large scales.
+- [ ] Map mouse press/release/hold to semantic input.
 
-Acceptance: documented commands reproduce a usable panel and existing hardware
-workflow; remaining limitations are explicit. No system-bar fork is required.
+Acceptance: desktop widgets share providers with the Touch Bar when both run;
+hidden agent widgets give up their space; clicks keep focus on the active
+window. Dependencies: T08.
+
+### T10 — Placement and theme
+
+- [ ] Implement the host chosen in T06 with monitor selection and height.
+- [ ] Follow the live theme palette and font; follow supported bar state
+  (hidden, size, position) where the host provides it.
+- [ ] Document behavior when the bar moves, hides, or is absent, and remaining
+  gaps.
+
+Acceptance: normal tiled and maximized windows sit below both rows on the
+selected monitor; other monitors are unaffected; theme changes apply without a
+backend restart; no reservation remains after exit. Dependencies: T09.
+
+### T11 — Package for machines without a Touch Bar
+
+- [ ] Installation that does not require t1bridge or a checkout at a fixed
+  path; autostart of backend and desktop host.
+- [ ] Record runtime dependencies (Quickshell, Hyprland or other compositor
+  requirements, Nerd Font).
+- [ ] Release smoke check: widgets, reload, reconnection, reservation, focus,
+  theme, scaling, monitor changes, and running alongside the Touch Bar.
+
+Acceptance: documented steps produce a working desktop row on a machine with no
+Touch Bar, and the Touch Bar workflow still works on this one.
 Dependencies: T10.
 
-## Stage 5: Native Omarchy row exploration
+## Stage 4: Native Omarchy row (proposed)
 
 ### T12 — Design a supported upstream extension contract
 
-- [ ] Draft a proposal for mounting an extra row while preserving the original
-  row's contents, dimensions, gestures, and widget/popup behavior.
-- [ ] Specify row sizing, combined reservation, host environment, visibility,
-  orientation policy, input boundaries, popup anchoring, and lifecycle.
-- [ ] Check service capability needs, especially notifications/media, against
-  Omarchy's plugin facades; distinguish required API from optional features.
+- [ ] Draft a proposal for mounting an extra row while preserving the existing
+  row's contents, gestures, and popups: sizing, combined reservation, host
+  environment, visibility, input boundaries, popup anchoring, lifecycle.
+- [ ] Compare with what the T06 panel plugin already provides.
 
-Acceptance: reviewable proposal and local prototype establish feasibility;
-upstream submission is a separate explicitly authorized action. No packaged
-Omarchy files are modified as an installation strategy.
-Dependencies: ADR; can be researched alongside T01–T11.
+Acceptance: a reviewable proposal and local prototype; submitting it upstream
+is a separate, explicitly authorized step. No packaged Omarchy files are
+modified. Dependencies: T06.
 
-### T13 — Implement the embedded host when the contract is available
+### T13 — Embedded host when the contract exists
 
-- [ ] Mount the shared QML controls through the accepted extension API.
-- [ ] Delegate background, transparency, hiding, theme, and reservation to
-  Omarchy; reuse the existing backend/client protocol.
-- [ ] Package the community plugin and document supported host versions.
+- [ ] Mount the shared QML controls through the accepted API; let Omarchy own
+  background, transparency, hiding, theme, and reservation.
 
-Acceptance: original top row behavior is preserved; double-click transparency
-and theme changes apply to both rows; existing popups still anchor correctly;
-the plugin contains no copied implementation of the system bar.
-Dependencies: T08 and an available, validated T12 extension contract.
+Acceptance: the existing top row is unchanged; transparency and theme changes
+apply to both rows; popups anchor correctly. Dependencies: T09 and an accepted
+T12 contract.
 
 ## Follow-on feature work
 
-After the core and desktop mode are stable, refine the proposals in `TODO.md`
-into individual feature tasks. Use the following ownership boundaries:
+After Stage 3, refine `TODO.md` proposals into tasks. Each must state its
+output labels and which clients create provider demand.
 
 | Feature family | Main work |
 | --- | --- |
 | Volume/brightness sliders and media seeking | Provider capabilities, value actions, Cairo/QML controls |
-| Workspaces, active window, app-aware layers | Hyprland provider, action adapters, core layer rules |
-| Notifications | Supported notification-service integration and transient core state |
+| Workspaces, active window, app-aware layers | Hyprland provider, actions, core rules |
+| Notifications | Integration with the existing notification service |
 | Claude sessions, Git/CI, timers | Providers and core state, then both presentations |
-| Gestures and additional layers | Semantic input, session policy, per-output mappings |
+| Gestures and additional layers | Semantic input; mostly Touch Bar |
 | Animations and theme polish | Presentation and host environment |
-| Hardware brightness/ambient light | Hardware capability/adapter, contingent on available IPC/sensors |
-
-New features should specify behavior for unsupported outputs and which visible
-sessions require provider activity. They do not require redesigning output hosts.
+| Touch Bar brightness / ambient light | Touch Bar client only |

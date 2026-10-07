@@ -1,196 +1,275 @@
-# ADR 0001: Shared application core with multiple output hosts
+# ADR 0001: Backend service with Touch Bar and desktop clients
 
 - Status: Accepted; implementation pending
-- Date: 2026-10-06
+- Date: 2026-10-06 (revised the same day after review)
 
 ## Context
 
 The Rust application currently combines provider polling, configuration,
 widget state, layer selection, input handling, actions, Cairo drawing, and
-t1bridge transport in `src/renderer.rs`. The Python renderer remains a fallback.
-The hardware output has a fixed usable width of 2060 pixels and hardware-specific
+t1bridge transport in `src/renderer.rs`. The Python renderer is a fallback.
+The hardware output has a usable width of 2060 pixels and hardware-specific
 touch and key handling. `--preview` produces a static image without hardware.
 
-We want a live desktop touchbar below the existing Omarchy top bar, reserving
-screen space for normal application windows. We also want to explore a true
-second row inside Omarchy without reimplementing application behavior.
-The existing top row should retain its contents and interactions. An embedded
-row should share its theme, background, transparency, and hiding behavior.
+We want the same widgets on machines without a physical Touch Bar: a live
+desktop row below the Omarchy top bar that reserves screen space for normal
+windows. The desktop row is for widgets that should stay visible all the time.
+It is not a replacement keyboard row, so keyboard-like Touch Bar features (Esc,
+F-keys, the Fn layer) do not carry over. Later, we may also explore a true
+second row inside the Omarchy bar.
 
-Current features include configurable buttons and commands, monitoring graphs,
-agent usage, media controls, microphone mute and waveform, and default/Fn layers.
-Proposed features in `TODO.md` include sliders, gestures, media seeking,
-workspaces, active-window controls, app-aware layers, notifications, development
-status, timers, animations, and theme styling. These proposals remain proposals;
-this decision provides extension boundaries rather than approving them all.
+Two facts about the current launch path constrain the design:
+
+- t1bridge's `t1-touchbar` user service starts `~/.config/t1bridge/renderer`
+  once, with no arguments. If it exits, the service runs the built-in renderer
+  until it is restarted; it never retries the selected renderer
+  (`crates/t1-touchbar/src/renderer_launcher.rs`).
+- The renderer exits on any hardware-socket error. So anything that lives in
+  that process, including a desktop backend, dies with the hardware connection
+  and does not come back by itself.
+
+Desktop machines have no t1bridge at all, so the backend cannot depend on it.
+
+Proposed features in `TODO.md` (sliders, gestures, media seeking, workspaces,
+notifications, and so on) remain proposals; this decision provides extension
+boundaries rather than approving them.
 
 ## Decision
 
-Separate provider state, application behavior, actions, presentation, and output
-hosting. Keep Rust as the shared backend. Retain Cairo for hardware presentation
-and implement desktop controls in QML. Share those QML controls between a
-standalone Quickshell panel and a future embedded Omarchy row.
+Rename the project to **omarchy-glance**, since it is no longer Touch
+Bar-specific, and split it into a **backend service** and **output clients**.
+The bare name `glance` is taken on the AUR (a self-hosted dashboard that
+installs `/usr/bin/glance`), so the package, binary, config directory, and
+runtime paths all use `omarchy-glance`.
 
-Deliver the standalone panel first. Pursue a supported upstream second-row
-extension separately. Do not require a replacement bar or fork of the Omarchy
-package for the initial desktop implementation.
+- The backend is its own systemd user service. It owns configuration,
+  providers, widget state, and action execution, and serves clients on a
+  user-private Unix socket. It runs with or without t1bridge.
+- The **Touch Bar client** is what `~/.config/t1bridge/renderer` launches. It
+  owns the t1bridge connection, Cairo drawing, touch handling, the Fn layer,
+  and hardware key taps. It is the first client of the backend protocol.
+- The **desktop client** comes later: QML controls shared by a layer-shell host
+  (standalone Quickshell or an Omarchy panel plugin, chosen by a spike) and,
+  in future, an embedded Omarchy row.
+
+Order of work: build the backend and the Touch Bar client first and prove the
+Touch Bar matches today's behavior and appearance. Then spike the desktop hosts.
+Then build the desktop renderer.
+
+Retire the Python renderer once the Touch Bar client is proven; it will not
+implement the backend protocol.
 
 ```text
-Providers -> Application core -> Widget state -> Presentation -> Output host
-                    ^                                |
-                    +------ Semantic input ----------+
-                    |
-                    +------ Actions -> Platform adapters
-
-Presentation / host combinations:
-  Cairo controls -> t1bridge hardware host (also static PNG preview)
-  QML controls   -> standalone Quickshell panel host
-  QML controls   -> embedded Omarchy row host (future)
+                    +-------------------- backend (user service) --------------------+
+                    |  config -> providers -> widget state        actions -> shell   |
+                    +-----------------------------^------------------------^-----------+
+                                       snapshots  |  semantic input/actions |
+                         +------------------------+------------+-----------+
+                         |                                     |
+           Touch Bar client (t1bridge renderer)       Desktop client (QML)
+           Cairo, touch, Fn layer, key taps,          layer-shell panel host,
+           t1bridge buffers                           later an Omarchy row host
 ```
 
 ## Boundaries
 
-| Layer | Owns | Does not own |
+| Part | Owns | Does not own |
 | --- | --- | --- |
-| Providers | Samples, usage records, media state, microphone levels, future window/workspace and workflow state | Geometry, drawing, output windows |
-| Application core | Config reload, stable widget identity, visibility, action availability, timers, layer rules and per-output sessions | Cairo/QML objects, pixel geometry |
-| Actions | Semantic activation and value changes, repeat scheduling, platform execution and results | Widget drawing or compositor placement |
-| Presentation | Layout, hit testing, visual feedback, fonts, assets, animation, theme mapping | Data collection and platform command implementations |
-| Output hosts | Hardware buffers/input or desktop window lifecycle, screen selection, reservation, host environment | Duplicate widget behavior |
+| Providers (backend) | Samples, usage records, media state, microphone levels, command output | Geometry, drawing, outputs |
+| Core (backend) | Config reload, stable widget identity, visibility, action availability, timers, per-client sessions and demand | Cairo/QML objects, pixel geometry |
+| Actions (backend) | Shell execution, press/release and repeat scheduling, cancellation, results | Drawing, hardware keys |
+| Touch Bar client | Layout within 2060 px, Cairo drawing, press feedback, touch contacts, Fn layer, idle dimming, `TapKeys`, display and keyboard-backlight IPC | Providers, shell commands, config parsing beyond its own section |
+| Desktop client | QML layout and controls, mouse input, theme/host environment, window placement | Providers, shell commands |
 
 Widget state is structured data: graph samples and ranges, media title and
-playback capabilities, agent limits, mute state, values and action availability.
-State must not contain drawing surfaces or final pixel coordinates. Format
-domain labels consistently in shared code where appropriate; text measurement,
-truncation, placement, and visual animation stay in presentation.
+playback capabilities, agent limits, mute state, command output, and action
+availability. It also carries each widget's presentation options from config
+(width, icon, font size, and so on) so clients don't parse config themselves.
+State never contains drawing surfaces or pixel coordinates.
 
-Controls emit semantic requests such as activate widget, set volume, seek media,
-or switch workspace. Platform adapters execute those requests. Existing shell
-commands remain supported, with execution centralized in the backend. A desktop
-client references configured widget actions rather than supplying arbitrary
-commands. Hardware keys continue using t1bridge; desktop key injection needs a
-separate capability and must report when unavailable.
+Clients send semantic input: press and release a widget, activate it, or (later)
+set a value. The backend runs the configured action. Clients never send shell
+commands. Hold-to-repeat lives in the backend so that a client that disconnects
+mid-press cannot leave an action repeating.
 
-Each output has a session containing its active layer, interaction lifecycle,
-visibility, and capabilities. Hardware Fn state does not implicitly change every
-desktop session. Touch ownership and cancel/release handling must survive config
-reloads and disconnects without leaving actions repeating. Mouse alternatives
-for multitouch and gestures belong to the desktop input mapping.
+## Output support
 
-Providers are shared across outputs. Sessions declare demand so hidden or
-disconnected outputs do not keep unnecessary polling or capture running. In
-particular, the microphone waveform retains the existing conditions: another
-application is recording, input is live, and at least one visible widget needs
-levels. Multiple outputs share a single capture.
+Each widget kind and feature is labelled by the outputs that support it. The
+labels go in the README widget table and in the backend's capability data, so a
+client can reject or hide a widget it does not support, with a log message,
+rather than silently drawing nothing. Draft labels, to be confirmed while
+inventorying the code (task T01):
 
-## Backend and desktop interface
+| Widget / feature | Touch Bar | Desktop | Notes |
+| --- | --- | --- | --- |
+| `glance.esc` | yes | no | Keyboard key |
+| `button` with `key` (Esc, F1–F12) | yes | no | Uses t1bridge `TapKeys` |
+| `button` with `exec` | yes | yes | Hold-to-repeat on both |
+| `command` | yes | yes | |
+| `glance.agents` | yes | yes | Usage-based hiding on both |
+| Graphs (`cpu`, `memory`, `gpu`, `network`, `disk`, `battery`, `fan`) | yes | yes | |
+| `glance.mic` | yes | yes | One shared capture |
+| `glance.media` | yes | yes | |
+| `glance.spacer` | yes | yes | Sizes are per-output |
+| Fn layer | yes | no | Driven by the physical Fn key |
+| Idle dimming | yes | no | |
+| Display brightness, keyboard backlight via t1bridge IPC | yes | no | |
 
-Initially keep the core and hardware adapter in one Rust process. Add a local
-Unix-domain socket for desktop clients; splitting the hardware host into another
-process is optional future work, not a prerequisite.
+New widgets and proposals in `TODO.md` must state their label.
 
-The interface must provide:
+## Backend protocol
 
-- A version/capability handshake, stable widget/session IDs, and a complete
-  initial snapshot followed by revisioned updates.
-- Structured action requests with acknowledgements or errors.
-- Session demand, visibility, input cancellation, and cleanup on disconnect.
-- Reconnection and snapshot resynchronization after restart or missed updates.
-- Bounded queues and coalescing of fast state updates so slow clients cannot
-  stall hardware rendering or provider collection.
-- User-private socket access and validation of requested widget actions.
+The backend listens at `$XDG_RUNTIME_DIR/omarchy-glance/backend.sock`, mode 0600, and
+is socket-activated so that whichever client connects first starts it.
 
-Use an XDG runtime location with restrictive permissions. Document framing,
-ordering, errors, and version compatibility before relying on the interface.
-Prefer straightforward structured messages initially; measure waveform/graph
-traffic before introducing shared-memory transport.
+The protocol provides:
 
-The current hardware service lets t1bridge fall back when the renderer exits.
-Desktop-only operation must also work without t1bridge. Establish backend
-ownership and startup behavior so enabling both outputs does not start duplicate
-providers. A desktop disconnect must not stop the hardware output, and hardware
-unavailability must not unnecessarily stop desktop clients.
+- A version and capability handshake in which the client declares its output
+  type (`touchbar` or `desktop`), followed by a complete snapshot and then
+  revisioned updates.
+- Stable widget and session IDs, and press/release/activate requests with
+  acknowledgements or errors.
+- Demand: the backend only runs providers that a connected, visible client
+  needs. The microphone keeps today's conditions: another application is
+  recording, input is live, and some visible widget needs levels. Clients share
+  one capture.
+- Cleanup on disconnect (cancel presses and repeats, release demand) and
+  resynchronization by snapshot after reconnecting or missing updates.
+- Bounded per-client queues with coalescing, so a slow client cannot stall the
+  backend or other clients.
 
-## Configuration and host environment
+Start with simple length-prefixed JSON messages and measure graph and waveform
+traffic (the waveform runs at 20 levels per second) before considering anything
+cheaper. Document framing, ordering, errors, and version compatibility in
+`docs/` before the desktop client relies on it.
 
-Preserve existing version-1 configuration behavior and hardware appearance
-during extraction. Add documented output-specific presentation and session
-settings without requiring existing users to migrate immediately. Provider and
-action definitions are shared; dimensions, styling, monitor choice, and layer
-selection can vary by output. Define override precedence explicitly.
+## Process lifecycle
 
-The desktop controls accept a host environment: theme palette, font, scale,
-orientation, available dimensions, transparency, and visibility. They contain no
-assumption about being in a standalone window or in the Omarchy bar.
+- One binary, `omarchy-glance`, with explicit modes: `touchbar` runs the Touch
+  Bar client, `backend` runs the service, and `preview` runs both in one
+  process to draw a PNG. t1bridge starts its renderer with no arguments, so
+  `~/.config/t1bridge/renderer` is a small installed wrapper that runs
+  `omarchy-glance touchbar`. Control commands (on/off/status/log/config, from
+  today's `touchbar-custom`) become subcommands of the same binary.
+- The Touch Bar client must not exit on recoverable errors. Exiting hands the
+  bar to t1bridge's built-in renderer for the rest of the session. It reconnects
+  to the backend and to the t1bridge socket instead, and shows a clear
+  disconnected state on the bar while the backend is unavailable.
+- A desktop client failing or disconnecting never affects the Touch Bar, and
+  the backend keeps running for desktop clients when t1bridge is absent.
+- Only one backend runs per user; the socket and service unit guarantee it.
 
-The standalone host uses a layer-shell `PanelWindow` anchored across the top of
-the selected monitor and reserves space below the existing bar. Validate actual
-compositor stacking and exclusion rather than assuming a fixed top offset.
-Normal tiled windows must remain below both panels. Fullscreen behavior is a
-separate policy to select and test. Clicking controls should preserve the active
-application wherever possible.
+## Configuration
 
-The embedded host relies on a future supported Omarchy row API for mounting,
-height, visibility, orientation, theme, transparency, input boundaries, and
-popup placement. Omarchy should own combined space reservation and background.
-The current installed bar has no supported second-row configuration option.
+Each output has its own file in `~/.config/omarchy-glance/`:
 
-Standalone theme synchronization is possible, but exact parity with the bar's
-transparency, contrast adjustment, hiding, movement, and monitor behavior is not
-assumed. Record supported synchronization and gaps. An upstream row API would
-provide these directly.
+- `touchbar.json`: today's `config.json` format, unchanged (`version`,
+  `layers.default` and `layers.fn`, `colors`, `font`, `idleDimSeconds`,
+  repeat timings, `debug`).
+- `desktop.json`: the same `version` and section shape, but a single widget
+  list (left/center/right) plus desktop settings such as monitor and height.
+  Colors and font come from the host theme by default.
+
+Each user file replaces its own built-in default entirely, as today; there is
+no merging between files or with defaults. Separate files keep that rule
+practical: changing the desktop row never requires copying the Touch Bar
+config, and the two share almost no settings. They also fail independently: an
+invalid `desktop.json` falls back to the desktop default and leaves the Touch
+Bar config alone. A widget wanted on both outputs is written in both files;
+shared widget definitions can be added later if that becomes tedious.
+
+Widget IDs use a `glance.` prefix (`glance.cpu`, `glance.agents`). The project
+has a single user, so there is no backward compatibility: old paths, file
+names, and `touchbar.*` IDs are not read, and existing files are moved and
+updated as part of each change.
+
+The backend validates each file against output labels at load time and logs
+unsupported widgets, for example `glance.esc` in `desktop.json`.
+
+## Desktop host
+
+The desktop controls take a host environment (palette, font, scale, available
+size, transparency, visibility) and make no assumption about their window.
+
+Two hosts are candidates, to be compared by a spike before the desktop
+renderer is built:
+
+- **Standalone Quickshell `PanelWindow`** (layer-shell). It works on any
+  layer-shell compositor and is the portable baseline for machines that are
+  not running Omarchy.
+- **Omarchy third-party `panel` plugin.** It runs inside `omarchy-shell` and
+  receives `PluginBarStateApi` (`barHidden`, `barSize`, `fontFamily`,
+  `position`), which the shell provides "for plugins that position independent
+  windows". That is a supported interface for following the bar without
+  forking or replacing it. It has no transparency field, and plugins run
+  unsandboxed in the shell.
+
+The spike must check: exclusive-zone stacking against the Omarchy bar,
+including after `omarchy-shell` restarts (Hyprland may order zones by map
+order); clicks that do not take focus from the active window; fractional
+scaling; fullscreen behavior; and what happens when the bar is moved to another
+edge or hidden. The first release supports a top-anchored horizontal row only.
+When the bar is on another edge or hidden, the row stays at the top.
+
+An embedded row inside the Omarchy bar needs a supported upstream extension
+API for mounting, sizing, combined reservation, theme, transparency, input
+boundaries, and popups. The installed bar has no second-row option. This
+remains future work and is not a prerequisite.
 
 ## Alternatives
 
-| Alternative | Reason not selected as the default |
+| Alternative | Reason not selected |
 | --- | --- |
-| Mirror Cairo frames into a desktop window | Reuses drawing, but retains hardware-oriented sizing and styling and makes native desktop controls harder |
-| Implement each output independently | Duplicates providers, actions, layer rules, and resource management |
-| Replacement Omarchy bar plugin | Supported in principle, but copies bar maintenance and has different service capabilities; existing popup parity requires validation |
-| Fork the complete system package | Larger maintenance scope than needed; copied code does not inherit package updates automatically |
-| Ordinary floating application window | Does not provide the panel reservation contract we need |
+| Backend inside the t1bridge-launched process | Dies with the hardware connection and cannot come back (the launcher never retries); machines without t1bridge would need a second way to launch it |
+| Mirror Cairo frames into a desktop window | Keeps hardware sizing and styling; no native desktop controls |
+| Implement each output independently | Duplicates providers, actions, and resource management |
+| Replacement Omarchy bar plugin | Copies bar maintenance; not needed for an extra row |
+| Fork the Omarchy package | Large maintenance scope; does not follow package updates |
+| Ordinary floating window | Does not reserve space |
 
-## Consequences and limitations
+## Consequences
 
-We maintain two presentation implementations, Cairo and QML, while sharing
-application behavior. They need semantic parity, not identical pixels.
-IPC and session lifecycle introduce complexity, so migrate in small working
-steps. No framework or generic plugin SDK is required for the core.
+- Two presentations, Cairo and QML. They need the same behavior, not the same
+  pixels.
+- The Touch Bar gains an IPC hop. Press feedback stays local to the client so
+  touch response does not depend on the backend; only the action goes over the
+  socket.
+- The protocol is exercised by the Touch Bar before any desktop code exists,
+  which tests its completeness early.
+- Installation must work without t1bridge and without a checkout at a fixed
+  path. Today `touchbar-custom` hardcodes the checkout location.
+- Python is removed, so `config.default.json` and docs no longer need to stay
+  compatible with it.
+- Media seeking needs position/duration support beyond `omarchy-shell media
+  status`. Notifications need integration with the existing service; the
+  backend must not start a competing daemon. Non-Hyprland compositors need
+  capability checks.
 
-Native embedding depends on upstream acceptance and API design. A replacement
-bar remains a fallback exploration, not the selected deployment architecture.
-Reusing installed internal bar code could follow system updates but is fragile
-without a supported extension contract.
+## Validation
 
-Media seeking requires position/duration support beyond the existing media
-status command. Notifications require an explicit service integration; the
-touchbar should not start a competing notification daemon. Fn observation,
-desktop key injection, active-window actions, and non-Hyprland support need
-capability checks. Orientation, fractional scaling, multiple monitors, popup
-placement, and fullscreen behavior require host-specific validation.
+- Before the split, add a deterministic preview (fixed clock, fixed provider
+  data) and golden PNGs for the default and Fn layers. The Touch Bar client
+  must reproduce them pixel for pixel.
+- Focused tests for visibility, session demand, press/repeat cancellation,
+  config reload, and protocol reconnection.
+- Performance: in Touch Bar-only use, backend plus client together should stay
+  close to the current baseline (14.5 MB RSS, about 0.8% CPU, 2.35 ms full
+  frame). Record the new numbers.
+- Real hardware checks of every widget, touch, repeat, Fn, and reload, plus
+  restarting the backend while the bar is running.
 
-The Python fallback remains operational but is not automatically a second
-implementation of the new backend protocol. Decide its longer-term support
-separately; do not silently remove it during this migration.
-
-## Validation and delivery
-
-Use focused tests for visibility, layer/session transitions, action lifecycle,
-provider demand, config reload, and protocol reconnection. Preserve hardware
-preview and validate real hardware interaction where required. Desktop smoke
-checks cover reservation, focus, theme changes, scaling, monitor changes, and
-backend restarts. Avoid tests that merely duplicate drawing implementation.
-
-Implementation tasks and their acceptance criteria are in
+Tasks and acceptance criteria are in
 [`../multi-output-tasks.md`](../multi-output-tasks.md).
 
 ## References
 
 - [Current features and configuration](../../README.md)
 - [Feature proposals](../../TODO.md)
+- [Touch Bar hardware IPC](../t1bridge-interfaces.md)
 - [Quickshell PanelWindow](https://quickshell.org/docs/types/Quickshell/PanelWindow)
 - [Layer-shell protocol](https://github.com/swaywm/wlr-protocols/blob/master/unstable/wlr-layer-shell-unstable-v1.xml)
-- Installed Omarchy sources inspected for this decision:
-  `/usr/share/omarchy/shell/plugins/bar/Bar.qml`,
-  `/usr/share/omarchy/shell/Ui/PluginBarApi.qml`, and
-  `/usr/share/omarchy/shell/README.md`.
+- t1bridge launcher: `crates/t1-touchbar/src/renderer_launcher.rs` in the
+  t1bridge source.
+- Installed Omarchy sources: `/usr/share/omarchy/shell/README.md` (plugin
+  kinds), `services/PluginBarStateApi.qml`, `plugins/bar/Bar.qml`,
+  `Ui/PluginBarApi.qml`.

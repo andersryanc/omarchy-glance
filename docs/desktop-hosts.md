@@ -60,6 +60,15 @@ can't stall the shell. Transparency isn't in the facade; read
 `bar.transparent` from `shell.json`, or ask upstream to add it to
 `PluginBarStateApi`.
 
+## Found with the real row (2026-10-07)
+
+Changing the display scale recreates the bar's windows, and the plugin's row
+then sat above the bar, like the standalone row after a shell restart. The
+plugin now uses the same remap on `openlayer>>omarchy-bar`, so the
+restart-proof stacking above isn't a difference between the hosts after all.
+Clicks keep focus on the active window, and the row scales with the display
+(checked by the user).
+
 ## Still to check by hand
 
 Clicking the row while another window has focus (focus must stay put),

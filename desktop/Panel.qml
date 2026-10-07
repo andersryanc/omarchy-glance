@@ -4,6 +4,7 @@
 // PluginBarStateApi facade (docs/desktop-client.md).
 import QtQuick
 import Quickshell
+import Quickshell.Hyprland
 import Quickshell.Wayland
 import qs.Commons
 import "glance"
@@ -33,12 +34,26 @@ Item {
     fontSize: Style.font.body
   }
 
+  // Hyprland stacks exclusive zones in map order. When the bar maps again
+  // after us (a scale or monitor change recreates its windows), our row
+  // ends up above it; unmapping and remapping puts it back underneath.
+  property bool mapped: true
+  Connections {
+    target: Hyprland
+    function onRawEvent(event) {
+      if (event.name === "openlayer" && event.data === "omarchy-bar") remap.restart()
+    }
+  }
+  Timer { id: remap; interval: 50; onTriggered: { root.mapped = false; show.restart() } }
+  Timer { id: show; interval: 50; onTriggered: root.mapped = true }
+
   Variants {
     model: Quickshell.screens
 
     PanelWindow {
       required property var modelData
       screen: modelData
+      visible: root.mapped
       // The first release is a top row only; it stays at the top when the
       // bar moves to another edge or hides.
       anchors { top: true; left: true; right: true }

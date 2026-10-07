@@ -101,7 +101,9 @@ QML.
 mounts it at startup once enabled. `Panel.qml` puts a `PanelWindow`
 (namespace `omarchy-glance`, top layer, no keyboard focus, its own exclusive
 zone) at the top of each screen, `Style.bar.sizeHorizontal` (26 px) high, and
-fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
+remaps itself whenever Hyprland reports `openlayer>>omarchy-bar` (a scale
+change recreates the bar's windows, which would otherwise stack below the
+row), and fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
 bar's font. Until T08 it shows the Touch Bar config. Install from the
 checkout:
 
@@ -113,7 +115,7 @@ omarchy-shell shell setPluginEnabled glance.row true   # false to remove it
 
 The shell reloads it when its files change. Still for T10: monitor selection
 and height from `desktop.json`, transparency, following the bar when it hides
-or moves, and the hand checks in [desktop-hosts.md](desktop-hosts.md).
+or moves, and monitor hotplug ([desktop-hosts.md](desktop-hosts.md)).
 
 ## Development host
 

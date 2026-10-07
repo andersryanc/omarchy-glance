@@ -82,12 +82,15 @@ function roundEven(v) {
   return Math.abs(v % 1) === 0.5 && r % 2 !== 0 ? r - 1 : r
 }
 
-function parseColor(hex) {
-  const v = String(hex).replace("#", "")
+// "#rrggbb", or the "rgb(r,g,b)" that lerp() returns, as [r, g, b].
+function parseColor(c) {
+  const s = String(c)
+  if (s.startsWith("rgb(")) return s.slice(4, -1).split(",").map(Number)
+  const v = s.replace("#", "")
   return [parseInt(v.slice(0, 2), 16), parseInt(v.slice(2, 4), 16), parseInt(v.slice(4, 6), 16)]
 }
 
-// Colour at t (0-1) along a list of "#rrggbb" stops, as a CSS rgb() string.
+// Colour at t (0-1) along a list of "#rrggbb" or rgb() stops, as a CSS rgb() string.
 function lerp(stops, t) {
   const cs = stops.map(parseColor)
   if (cs.length === 1) return "rgb(" + cs[0].join(",") + ")"

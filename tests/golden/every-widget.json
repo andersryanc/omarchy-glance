@@ -1,0 +1,48 @@
+{
+  "version": 1,
+  "colors": {
+    "background": "#000000",
+    "key": "#303030",
+    "keyPressed": "#808080",
+    "text": "#ffffff",
+    "urgent": "#e05a5a"
+  },
+  "font": "JetBrainsMono Nerd Font",
+  "idleDimSeconds": 0,
+  "layers": {
+    "default": {
+      "left": [
+        { "id": "glance.esc" },
+        { "id": "glance.cpu", "cores": true, "temperature": true, "graphWidth": 60 },
+        { "id": "glance.memory", "graphWidth": 60 }
+      ],
+      "center": [
+        { "id": "glance.gpu", "temperature": true, "graphWidth": 60, "style": "bars" },
+        { "id": "glance.network", "graphWidth": 60 },
+        { "id": "glance.disk", "graphWidth": 60, "grid": false }
+      ],
+      "right": [
+        { "id": "glance.fan", "graphWidth": 60, "dotSpacing": 5 },
+        { "id": "glance.battery", "detail": "time", "graphWidth": 80 }
+      ]
+    },
+    "fn": {
+      "left": [
+        { "id": "glance.esc", "width": 100 },
+        { "id": "f1", "type": "button", "label": "F1", "key": "F1", "width": 80 },
+        { "id": "up", "type": "button", "icon": "", "exec": "true", "repeat": true, "width": 80 },
+        { "id": "glance.spacer", "size": 20 },
+        { "id": "uptime", "type": "command", "exec": "true" },
+        { "id": "alert", "type": "command", "exec": "true", "width": 130 }
+      ],
+      "center": [
+        { "id": "glance.media", "buttonWidth": 60, "titleWidth": 180 },
+        { "id": "glance.mic", "waveformWidth": 80 }
+      ],
+      "right": [
+        { "id": "glance.agents", "agent": "claude" },
+        { "id": "glance.agents", "agent": "codex", "layout": "stacked", "meterWidth": 60, "resets": "countdown" }
+      ]
+    }
+  }
+}

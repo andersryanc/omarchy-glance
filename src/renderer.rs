@@ -282,6 +282,7 @@ pub struct Renderer {
     config: Rc<Config>,
     loaded: bool,
     measure: Context, // scratch context for measuring text outside a frame
+    clock: Option<DateTime<FixedOffset>>, // fixed time and zone instead of the system's (golden tests)
 }
 
 impl Renderer {
@@ -333,6 +334,7 @@ impl Renderer {
             config: Rc::new(Config::parse(DEFAULT_CONFIG).expect("built-in config")),
             loaded: false,
             measure: Context::new(&surface).expect("cairo context"),
+            clock: None,
         }
     }
 
@@ -772,42 +774,42 @@ impl Renderer {
         for agent in agents {
             let path = directory.join(format!("{agent}.json"));
             let mt = mtime(&path);
-            let old = self.usage.get(&agent);
-            if old.is_some_and(|o| o.0 == mt) {
+            if self.usage.get(&agent).is_some_and(|o| o.0 == mt) {
                 continue;
             }
-            let mut limits = vec![];
             let record = fs::read_to_string(&path).map_err(|e| e.to_string()).and_then(|s| {
                 serde_json::from_str::<Value>(&s).map_err(|e| e.to_string())
             });
-            let mut has_data = false;
-            match record {
-                Ok(record) => {
-                    has_data = provider_has_data(&record);
-                    for entry in record.get("limits").and_then(Value::as_array).into_iter().flatten() {
-                        let Some(entry) = entry.as_object() else { continue };
-                        let frac = num(entry, "percent", -1.0);
-                        if frac >= 0.0 {
-                            let label = text(entry, "label", "");
-                            let label = label.split(" (").next().unwrap_or("").to_string();
-                            limits.push(Limit {
-                                label: if label.is_empty() { "Limit".into() } else { label },
-                                frac: Some(frac),
-                                resets: entry.get("resetsAt").and_then(Value::as_str).and_then(parse_time),
-                            });
-                        }
-                    }
-                }
-                Err(e) if mt.is_some() => log(&format!("unreadable usage record {}: {e}", path.display())),
-                Err(_) => {}
+            if let Err(e) = &record && mt.is_some() {
+                log(&format!("unreadable usage record {}: {e}", path.display()));
             }
-            let changed = old.is_none_or(|o| o.1 != limits)
-                || self.provider_data.get(&agent).copied() != Some(has_data);
-            self.provider_data.insert(agent.clone(), has_data);
-            self.usage.insert(agent, (mt, limits));
-            if changed {
-                self.relayout();
+            self.set_usage(agent, mt, record.ok());
+        }
+    }
+
+    /// Take an agent's usage record (None when missing or unreadable).
+    fn set_usage(&mut self, agent: String, mt: Option<SystemTime>, record: Option<Value>) {
+        let mut limits = vec![];
+        let has_data = record.as_ref().is_some_and(provider_has_data);
+        for entry in record.iter().filter_map(|r| r.get("limits")?.as_array()).flatten() {
+            let Some(entry) = entry.as_object() else { continue };
+            let frac = num(entry, "percent", -1.0);
+            if frac >= 0.0 {
+                let label = text(entry, "label", "");
+                let label = label.split(" (").next().unwrap_or("").to_string();
+                limits.push(Limit {
+                    label: if label.is_empty() { "Limit".into() } else { label },
+                    frac: Some(frac),
+                    resets: entry.get("resetsAt").and_then(Value::as_str).and_then(parse_time),
+                });
             }
+        }
+        let changed = self.usage.get(&agent).is_none_or(|o| o.1 != limits)
+            || self.provider_data.get(&agent).copied() != Some(has_data);
+        self.provider_data.insert(agent.clone(), has_data);
+        self.usage.insert(agent, (mt, limits));
+        if changed {
+            self.relayout();
         }
     }
 
@@ -998,7 +1000,8 @@ impl Renderer {
         }
         parts.push((Part::Graph, g.columns as i32 * sp));
         if truthy(s.get("cores")) && source.kind == sources::Kind::Cpu {
-            parts.push((Part::Cores, gap + (3 * cpu_count() as i32 - 1) * sp));
+            let cores = if source.cores.is_empty() { cpu_count() } else { source.cores.len() };
+            parts.push((Part::Cores, gap + (3 * cores as i32 - 1) * sp));
         }
         if s.get("showValue").is_none_or(|v| truthy(Some(v))) {
             let widest = source.widest();
@@ -1249,7 +1252,7 @@ impl Renderer {
             let pct = l.frac.map_or("—".to_string(), |f| format!("{}%", pyround(f * 100.0)));
             self.draw_text_at(cr, &pct, mx + meter_w + 10.0 + pct_w, cy, STACKED_FONT, if alarm { urgent } else { white }, true);
             if reset_w != 0 {
-                let reset = reset_text(w, l.resets);
+                let reset = reset_text(w, l.resets, self.clock);
                 self.draw_text_at(cr, &reset, mx + meter_w + 10.0 + pct_w + 12.0, cy, STACKED_FONT, RESET_COLOR, false);
             }
         }
@@ -1273,7 +1276,7 @@ impl Renderer {
             self.set_color(cr, white, 1.0);
             cr.move_to(x, 25.0);
             let _ = cr.show_text(&l.label);
-            let reset = reset_text(w, l.resets);
+            let reset = reset_text(w, l.resets, self.clock);
             if !reset.is_empty() {
                 self.set_color(cr, RESET_COLOR, 1.0);
                 let _ = cr.show_text(&format!("  {reset}"));
@@ -1858,14 +1861,16 @@ fn media_zone(w: &Widget, lx: Option<i32>) -> Option<&'static str> {
 }
 
 /// When a limit resets: a clock time (with the weekday if it's more than a day
-/// away), or with "resets": "countdown" the time left.
-fn reset_text(w: &Widget, resets: Option<DateTime<FixedOffset>>) -> String {
+/// away), or with "resets": "countdown" the time left. `clock` replaces the
+/// current time and local zone.
+fn reset_text(w: &Widget, resets: Option<DateTime<FixedOffset>>, clock: Option<DateTime<FixedOffset>>) -> String {
     let mode = text(&w.spec, "resets", "time");
     if mode == "none" {
         return String::new();
     }
     let Some(resets) = resets else { return "—".into() };
-    let left = (resets.with_timezone(&Utc) - Utc::now()).num_milliseconds() as f64 / 1000.0;
+    let now = clock.map_or_else(Utc::now, |c| c.with_timezone(&Utc));
+    let left = (resets.with_timezone(&Utc) - now).num_milliseconds() as f64 / 1000.0;
     if left <= 0.0 {
         return "now".into();
     }
@@ -1881,7 +1886,10 @@ fn reset_text(w: &Widget, resets: Option<DateTime<FixedOffset>>) -> String {
         };
     }
     let fmt = if left < 86400.0 { text(&w.spec, "timeFormat", "%H:%M") } else { text(&w.spec, "dayTimeFormat", "%a %H:%M") };
-    strftime(&resets.with_timezone(&Local), &fmt)
+    match clock {
+        Some(c) => strftime(&resets.with_timezone(c.offset()), &fmt),
+        None => strftime(&resets.with_timezone(&Local), &fmt),
+    }
 }
 
 /// A sample of the longest reset text, so the widget doesn't change width.
@@ -1897,6 +1905,9 @@ fn reset_widest(w: &Widget) -> String {
         }
     }
 }
+
+#[cfg(test)]
+mod golden;
 
 #[cfg(test)]
 mod agent_visibility_tests {

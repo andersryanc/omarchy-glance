@@ -103,6 +103,7 @@ pub struct Source {
     prev_counts: Option<(Instant, Vec<i64>)>, // network, disk
     temp_path: Option<String>,
     device: Option<String>, // gpu device dir, disk name, battery dir, fan input
+    pub fixed_icon: Option<String>, // battery label instead of reading the battery (golden tests)
 }
 
 impl Source {
@@ -116,6 +117,7 @@ impl Source {
             prev_counts: None,
             temp_path: None,
             device: None,
+            fixed_icon: None,
         }
     }
 
@@ -401,6 +403,9 @@ impl Source {
     }
 
     fn battery_icon(&self) -> String {
+        if let Some(icon) = &self.fixed_icon {
+            return icon.clone();
+        }
         let mut me = Source::new(self.kind, &self.spec);
         me.device = self.device.clone();
         let state = me.battery_dir().and_then(|_| Ok((me.charge()?, me.bat("status")?)));

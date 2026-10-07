@@ -36,12 +36,14 @@ name.
 
 ### T00 — Regression safety net
 
-- [ ] Add a deterministic preview: fixed clock and fixed provider data (graph
+- [x] Add a deterministic preview: fixed clock and fixed provider data (graph
   history, agent usage, media, mic state, command output).
-- [ ] Commit golden PNGs for the default and Fn layers of `touchbar.default.json`
+- [x] Commit golden PNGs for the default and Fn layers of `touchbar.default.json`
   and of a config that uses every widget kind.
-- [ ] Record current performance (RSS, CPU, full-frame time) with the same
-  method as the baseline in the Rust-port notes.
+- [x] Record current performance (RSS, CPU, full-frame time) with the same
+  method as the baseline in the Rust-port notes. That method wasn't recorded,
+  so [performance.md](performance.md) defines a repeatable one and holds the
+  results.
 
 Acceptance: a test compares preview output to the golden images and fails on
 any pixel difference. Dependencies: none.

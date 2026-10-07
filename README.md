@@ -27,6 +27,16 @@ the Fn layer):
 target/release/omarchy-glance --preview /tmp/bar.png [fn]
 ```
 
+`cargo test --release` also draws the default config and
+`tests/golden/every-widget.json` (both layers) with fixed data
+(`tests/golden/fixture.json`) and a fixed clock, and fails if any pixel differs
+from the images in `tests/golden/`. A failing test writes the actual frame to
+`target/golden/`. After an intended visual change, look at the new frames and
+then accept them with `UPDATE_GOLDEN=1 cargo test --release golden`. Text uses
+the installed fonts, so the images only match where JetBrainsMono Nerd Font is
+installed. Performance measurements and their method are in
+[docs/performance.md](docs/performance.md).
+
 ## Switching renderers
 
 ```
@@ -57,11 +67,12 @@ machines without a Touch Bar) is documented in
 
 | Path | |
 |---|---|
-| `src/` | Rust renderer: `main.rs` (entry, `--preview`), `cli.rs` (control subcommands), `proto.rs` (IPC, memfd buffers), `config.rs`, `renderer.rs` (widgets, layout, drawing, input, event loop), `sources.rs` (graph data), `mic.rs`, `proc.rs` (child processes). |
+| `src/` | Rust renderer: `main.rs` (entry, `--preview`), `cli.rs` (control subcommands), `proto.rs` (IPC, memfd buffers), `config.rs`, `renderer.rs` (widgets, layout, drawing, input, event loop) and `renderer/golden.rs` (golden-preview tests), `sources.rs` (graph data), `mic.rs`, `proc.rs` (child processes). |
 | `python/` | Python renderer: `renderer.py`, `sources.py`, `mic.py`. |
 | `touchbar.default.json` | The default Touch Bar config, shared: compiled into the Rust binary, read by Python. |
 | `docs/` | t1bridge's IPC spec and README, the nohzafk T1 notes, the T1's USB descriptors. |
-| `tools/` | Hardware experiments, e.g. `cutoff_test.py` (the 2060 px limit). |
+| `tests/golden/` | Golden-preview images, the config that uses every widget kind, and the fixed data they're drawn with. |
+| `tools/` | Hardware experiments, e.g. `cutoff_test.py` (the 2060 px limit), and `perf.sh` (memory and CPU of the running bar). |
 | `TODO.md` | Backlog. |
 
 ## Configuration

@@ -4,10 +4,13 @@ Task T07 of [multi-output-tasks.md](multi-output-tasks.md). The desktop row is
 QML in `desktop/`: shared controls in `desktop/glance/` and the hosts that
 place them. The host is the Omarchy panel plugin, with a standalone
 development host ([desktop-hosts.md](desktop-hosts.md); chosen 2026-10-07).
-The plugin itself arrives with T10; T09 replaces the placeholder widgets.
+T09 replaces the placeholder widgets; T10 finishes the plugin (a first
+version is in, see [Panel plugin](#panel-plugin)).
 
 ```text
 desktop/
+  manifest.json        the Omarchy panel plugin glance.row
+  Panel.qml            its entry point: one row under the bar per screen
   shell.qml            development host: qs -p desktop
   check.qml            headless check, run by tools/desktop-check.sh
   glance/
@@ -17,9 +20,8 @@ desktop/
     WidgetView.qml     placeholder control per widget (until T09)
 ```
 
-The plugin will live in `desktop/` too (its `manifest.json` and panel entry
-point next to `shell.qml`), because Quickshell only resolves imports inside
-the config folder, and the plugin directory is what Omarchy installs.
+The plugin lives in `desktop/` too, because Quickshell only resolves imports
+inside the config folder, and the plugin directory is what Omarchy installs.
 
 ## Host contract
 
@@ -92,6 +94,26 @@ has two sessions, which share providers in the backend.
 Quickshell logs a warning for each failed connection attempt (at most every
 2 s while the backend can't be started); there's no way to silence it from
 QML.
+
+## Panel plugin
+
+`glance.row` is a `panel` plugin with `keepLoaded: true`, so omarchy-shell
+mounts it at startup once enabled. `Panel.qml` puts a `PanelWindow`
+(namespace `omarchy-glance`, top layer, no keyboard focus, its own exclusive
+zone) at the top of each screen, `Style.bar.sizeHorizontal` (26 px) high, and
+fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
+bar's font. Until T08 it shows the Touch Bar config. Install from the
+checkout:
+
+```sh
+ln -sfn ~/Work/omarchy-glance/desktop ~/.config/omarchy/plugins/glance.row
+omarchy-shell shell rescanPlugins
+omarchy-shell shell setPluginEnabled glance.row true   # false to remove it
+```
+
+The shell reloads it when its files change. Still for T10: monitor selection
+and height from `desktop.json`, transparency, following the bar when it hides
+or moves, and the hand checks in [desktop-hosts.md](desktop-hosts.md).
 
 ## Development host
 

@@ -24,10 +24,9 @@ waiting for a yes or no.
 
 - [x] Stage 0: rename the project to `omarchy-glance`, with the Touch Bar config
       at `~/.config/omarchy-glance/touchbar.json` (R01).
-- [ ] Stage 1: split out a backend service; the Touch Bar renderer becomes its
+- [x] Stage 1: split out a backend service; the Touch Bar renderer becomes its
       first client and must match current behavior and appearance (T00–T04).
-      Built 2026-10-07; the hands-on check on the bar (every widget, touch,
-      hold-to-repeat, Fn, reload, invalid config) is still to do.
+      Built 2026-10-07; checked on the bar by the user the same day.
 - [x] Retire the Python renderer (T05; removed 2026-10-07, recoverable from
       git history before that commit).
 - [ ] Stage 2: spike standalone Quickshell vs Omarchy panel-plugin hosts (T06).
@@ -35,7 +34,8 @@ waiting for a yes or no.
       panel plugin is the host (approved), standalone for development only;
       clicks/focus, fractional scaling and hotplug still to check by hand.
 - [ ] Stage 3: desktop renderer for machines without a Touch Bar (T07–T11).
-      T07 (QML client and host contract, `desktop/`) done 2026-10-07.
+      T07 (QML client and host contract, `desktop/`) done 2026-10-07; a first
+      panel plugin (T10) shows the row under the bar.
 
 ## Bugs
 

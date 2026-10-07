@@ -227,6 +227,10 @@ window. Dependencies: T08.
 - [ ] Document behavior when the bar moves, hides, or is absent, and remaining
   gaps.
 
+Started early on 2026-10-07 (the user asked to see the row in place):
+`desktop/manifest.json` and `Panel.qml` put the row under the bar on every
+screen with the live theme ([desktop-client.md](desktop-client.md#panel-plugin)).
+
 Acceptance: normal tiled and maximized windows sit below both rows on the
 selected monitor; other monitors are unaffected; theme changes apply without a
 backend restart; no reservation remains after exit. Dependencies: T09.

@@ -1,0 +1,11 @@
+{
+  "schemaVersion": 1,
+  "id": "glance.row",
+  "name": "omarchy-glance",
+  "version": "0.1.0",
+  "author": "omarchy-glance",
+  "description": "A row of glance widgets under the Omarchy bar, driven by the omarchy-glance backend.",
+  "kinds": ["panel"],
+  "keepLoaded": true,
+  "entryPoints": { "panel": "Panel.qml" }
+}

@@ -255,12 +255,21 @@ backend restart; no reservation remains after exit. Dependencies: T09.
 
 ### T11 — Package for machines without a Touch Bar
 
-- [ ] Installation that does not require t1bridge or a checkout at a fixed
+- [x] Installation that does not require t1bridge or a checkout at a fixed
   path; autostart of backend and desktop host.
-- [ ] Record runtime dependencies (Omarchy, which brings Hyprland, Quickshell
+- [x] Record runtime dependencies (Omarchy, which brings Hyprland, Quickshell
   and the Nerd Font).
 - [ ] Release smoke check: widgets, reload, reconnection, reservation, focus,
   theme, scaling, monitor changes, and running alongside the Touch Bar.
+
+Done 2026-10-07 except a run on a machine without a Touch Bar:
+`omarchy-glance desktop on|off` installs the backend units and the panel
+plugin, which is compiled into the binary, so a `cargo install`ed binary
+needs no checkout; omarchy-shell mounts the plugin at login and the row's
+connection starts the backend. Install steps and dependencies are in the
+README ([On a machine without a Touch Bar](../README.md#on-a-machine-without-a-touch-bar)),
+the smoke check and this machine's run in [release-check.md](release-check.md)
+(monitor changes and the T09 widgets' clicks are still to check by hand).
 
 Acceptance: documented steps produce a working desktop row on a machine with no
 Touch Bar, and the Touch Bar workflow still works on this one.

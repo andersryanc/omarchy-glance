@@ -1,5 +1,6 @@
 //! Control subcommands: switch the Touch Bar between this client (with its
-//! backend service) and the t1bridge built-in, and manage the user config.
+//! backend service) and the t1bridge built-in, install the desktop row's
+//! Omarchy panel plugin, and manage the user configs.
 
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
@@ -11,7 +12,7 @@ use crate::config::user_config;
 use crate::protocol::Output;
 
 pub const USAGE: &str =
-    "usage: omarchy-glance on|off|restart|status|log|config [desktop] [edit]|backend|touchbar|preview out.png [fn]";
+    "usage: omarchy-glance on|off|desktop on|off|restart|status|log|config [desktop] [edit]|backend|touchbar|preview out.png [fn]";
 
 const BACKEND: &str = "omarchy-glance.service";
 const SOCKET: &str = "omarchy-glance.socket";
@@ -19,6 +20,30 @@ const SOCKET: &str = "omarchy-glance.socket";
 const UNITS: [(&str, &str); 2] = [
     (SOCKET, include_str!("../systemd/omarchy-glance.socket")),
     (BACKEND, include_str!("../systemd/omarchy-glance.service")),
+];
+
+// The desktop row's panel plugin, compiled in so an installed binary needs no
+// checkout. The development hosts (shell.qml, check.qml, shot.qml) stay out.
+const PLUGIN_ID: &str = "glance.row";
+const PLUGIN_FILES: [(&str, &str); 18] = [
+    ("manifest.json", include_str!("../desktop/manifest.json")),
+    ("Panel.qml", include_str!("../desktop/Panel.qml")),
+    ("glance/AgentsWidget.qml", include_str!("../desktop/glance/AgentsWidget.qml")),
+    ("glance/BtopTheme.qml", include_str!("../desktop/glance/BtopTheme.qml")),
+    ("glance/ButtonWidget.qml", include_str!("../desktop/glance/ButtonWidget.qml")),
+    ("glance/CommandWidget.qml", include_str!("../desktop/glance/CommandWidget.qml")),
+    ("glance/Dots.qml", include_str!("../desktop/glance/Dots.qml")),
+    ("glance/Face.qml", include_str!("../desktop/glance/Face.qml")),
+    ("glance/GlanceClient.qml", include_str!("../desktop/glance/GlanceClient.qml")),
+    ("glance/GlanceHost.qml", include_str!("../desktop/glance/GlanceHost.qml")),
+    ("glance/GlanceRow.qml", include_str!("../desktop/glance/GlanceRow.qml")),
+    ("glance/GraphWidget.qml", include_str!("../desktop/glance/GraphWidget.qml")),
+    ("glance/MediaWidget.qml", include_str!("../desktop/glance/MediaWidget.qml")),
+    ("glance/Meter.qml", include_str!("../desktop/glance/Meter.qml")),
+    ("glance/MicWidget.qml", include_str!("../desktop/glance/MicWidget.qml")),
+    ("glance/WidgetView.qml", include_str!("../desktop/glance/WidgetView.qml")),
+    ("glance/util.js", include_str!("../desktop/glance/util.js")),
+    ("README.md", "Installed by `omarchy-glance desktop on`; `omarchy-glance desktop off` removes it.\n"),
 ];
 
 fn config_home() -> PathBuf {
@@ -49,10 +74,13 @@ fn install(path: &Path, content: &str, mode: u32) -> Result<bool, String> {
     Ok(true)
 }
 
-/// Install the backend's units and the t1bridge renderer wrapper, then
-/// (re)start the backend and the bar so both run this binary.
-fn on() -> Result<(), String> {
-    let exe = std::env::current_exe().and_then(fs::canonicalize).map_err(|e| format!("current executable: {e}"))?;
+fn exe() -> Result<PathBuf, String> {
+    std::env::current_exe().and_then(fs::canonicalize).map_err(|e| format!("current executable: {e}"))
+}
+
+/// Install the backend's socket and service units for this binary, enable
+/// the socket, and restart a running backend so it runs this binary.
+fn install_backend(exe: &Path) -> Result<(), String> {
     let quoted = format!("'{}'", exe.display());
     let mut changed = false;
     for (name, unit) in UNITS {
@@ -63,7 +91,15 @@ fn on() -> Result<(), String> {
         systemctl(&["daemon-reload"])?;
     }
     systemctl(&["enable", "--now", SOCKET])?;
-    systemctl(&["try-restart", BACKEND])?; // a running backend picks up a rebuilt binary
+    systemctl(&["try-restart", BACKEND]) // a running backend picks up a rebuilt binary
+}
+
+/// Install the backend and the t1bridge renderer wrapper, then (re)start the
+/// backend and the bar so both run this binary.
+fn on() -> Result<(), String> {
+    let exe = exe()?;
+    install_backend(&exe)?;
+    let quoted = format!("'{}'", exe.display());
     // The t1bridge launcher runs its renderer with no arguments.
     let wrapper = format!("#!/bin/sh\n# Installed by `omarchy-glance on`.\nexec {quoted} touchbar\n");
     install(&renderer_link(), &wrapper, 0o755)?;
@@ -85,10 +121,86 @@ fn off() -> Result<(), String> {
     Ok(())
 }
 
+fn plugin_dir() -> PathBuf {
+    config_home().join("omarchy/plugins").join(PLUGIN_ID)
+}
+
+/// Run an omarchy-shell IPC call; returns what it printed.
+fn omarchy_shell(args: &[&str]) -> Result<String, String> {
+    let out = Command::new("omarchy-shell").args(args).output().map_err(|e| format!("omarchy-shell: {e}"))?;
+    if !out.status.success() {
+        return Err(format!("omarchy-shell {} failed", args.join(" ")));
+    }
+    Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+/// Enable or disable the plugin. Right after a rescan the shell may not know
+/// it yet ("unknown"), so retry for a few seconds.
+fn set_plugin_enabled(enabled: bool) -> Result<(), String> {
+    let flag = if enabled { "true" } else { "false" };
+    for _ in 0..30 {
+        if omarchy_shell(&["shell", "setPluginEnabled", PLUGIN_ID, flag])? == "ok" {
+            return Ok(());
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    Err(format!("omarchy-shell doesn't know the plugin {PLUGIN_ID}"))
+}
+
+/// Remove the plugin directory, or a development link in its place.
+fn remove_plugin(dir: &Path) -> Result<(), String> {
+    let err = |e: std::io::Error| format!("{}: {e}", dir.display());
+    match fs::symlink_metadata(dir) {
+        Ok(m) if m.is_dir() => fs::remove_dir_all(dir).map_err(err),
+        Ok(_) => fs::remove_file(dir).map_err(err),
+        Err(_) => Ok(()),
+    }
+}
+
+/// Install the backend and the desktop row's panel plugin (no t1bridge
+/// needed), and enable it in omarchy-shell. omarchy-shell keeps a loaded
+/// plugin's old code, so an update restarts the shell.
+fn desktop_on() -> Result<(), String> {
+    install_backend(&exe()?)?;
+    let dir = plugin_dir();
+    let update = fs::symlink_metadata(&dir).is_ok();
+    remove_plugin(&dir)?;
+    for (name, content) in PLUGIN_FILES {
+        install(&dir.join(name), content, 0o644)?;
+    }
+    omarchy_shell(&["shell", "rescanPlugins"])?;
+    set_plugin_enabled(true)?;
+    if update {
+        let status = Command::new("omarchy-restart-shell").status().map_err(|e| format!("omarchy-restart-shell: {e}"))?;
+        if !status.success() {
+            return Err("omarchy-restart-shell failed".into());
+        }
+    }
+    println!("desktop row on: {}", dir.display());
+    Ok(())
+}
+
+/// Remove the desktop row. The backend stays installed for the Touch Bar.
+fn desktop_off() -> Result<(), String> {
+    if plugin_dir().exists() {
+        set_plugin_enabled(false)?;
+    }
+    remove_plugin(&plugin_dir())?;
+    omarchy_shell(&["shell", "rescanPlugins"])?;
+    println!("desktop row off");
+    Ok(())
+}
+
 fn status() -> Result<(), String> {
     match fs::read_to_string(renderer_link()) {
         Ok(script) => println!("selected: {}", script.lines().last().unwrap_or("").trim_start_matches("exec ")),
         Err(_) => println!("selected: built-in"),
+    }
+    let dir = plugin_dir();
+    match fs::read_link(&dir) {
+        Ok(target) => println!("desktop row: linked to {}", target.display()),
+        Err(_) if dir.is_dir() => println!("desktop row: installed in {}", dir.display()),
+        Err(_) => println!("desktop row: not installed"),
     }
     // Only the process lists; the log is `omarchy-glance log`.
     for unit in ["t1-touchbar", BACKEND] {
@@ -132,6 +244,11 @@ pub fn run(args: &[String]) -> Option<Result<(), String>> {
     Some(match args.first()?.as_str() {
         "on" => on(),
         "off" => off(),
+        "desktop" => match second {
+            Some("on") => desktop_on(),
+            Some("off") => desktop_off(),
+            _ => Err(USAGE.into()),
+        },
         "restart" => systemctl(&["try-restart", BACKEND]).and_then(|_| systemctl(&["restart", "t1-touchbar"])),
         "status" => status(),
         "log" => Err(format!(
@@ -145,4 +262,30 @@ pub fn run(args: &[String]) -> Option<Result<(), String>> {
         }
         _ => return None,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Every plugin file in desktop/ is compiled in, apart from the
+    /// development hosts.
+    #[test]
+    fn plugin_files_are_complete() {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("desktop");
+        let mut on_disk = vec![];
+        for dir in ["", "glance"] {
+            for entry in fs::read_dir(root.join(dir)).unwrap() {
+                let path = entry.unwrap().path();
+                if path.is_file() {
+                    on_disk.push(path.strip_prefix(&root).unwrap().display().to_string());
+                }
+            }
+        }
+        on_disk.retain(|f| !["shell.qml", "check.qml", "shot.qml"].contains(&f.as_str()));
+        on_disk.sort();
+        let mut embedded: Vec<String> = PLUGIN_FILES.iter().map(|(n, _)| n.to_string()).filter(|n| n != "README.md").collect();
+        embedded.sort();
+        assert_eq!(embedded, on_disk);
+    }
 }

@@ -1,6 +1,9 @@
 # omarchy-glance
 
-A custom renderer for the MacBook Pro T1 Touch Bar, driven through
+Glanceable widgets for Omarchy: on the MacBook Pro T1 Touch Bar, and as a
+row under the Omarchy bar on any Omarchy machine.
+
+The Touch Bar part is a custom renderer, driven through
 [t1bridge](https://github.com/standardagents/t1bridge)'s Touch Bar hardware IPC
 (`docs/t1bridge-interfaces.md`). By default it draws an Esc key, media keys,
 btop-style CPU and memory graphs and a Claude usage widget, and while Fn is
@@ -10,8 +13,10 @@ comes from a JSON config.
 It runs as two parts: a backend service (`omarchy-glance backend`) that reads
 the config, samples the system and runs actions, and the Touch Bar client
 (`omarchy-glance touchbar`) that draws the backend's widget state through
-t1bridge and sends it touches. A desktop row for machines without a Touch Bar
-is planned as a second client ([ADR 0001](docs/adr/0001-multiple-output-architecture.md)).
+t1bridge and sends it touches. The desktop row is a second client, an Omarchy
+panel plugin, mainly for machines without a Touch Bar
+([ADR 0001](docs/adr/0001-multiple-output-architecture.md),
+[Desktop row](#desktop-row)).
 
 ## Building
 
@@ -49,13 +54,47 @@ the installed fonts, so the images only match where JetBrainsMono Nerd Font is
 installed. Performance measurements and their method are in
 [docs/performance.md](docs/performance.md).
 
+### On a machine without a Touch Bar
+
+Only the desktop row; t1bridge isn't needed. Install the binary somewhere
+that stays (the checkout can be deleted afterwards), then set it up:
+
+```
+cargo install --path . --root ~/.local     # ~/.local/bin/omarchy-glance
+omarchy-glance desktop on
+```
+
+`desktop on` installs the backend's systemd user units for this binary and
+enables its socket, writes the panel plugin (compiled into the binary) to
+`~/.config/omarchy/plugins/glance.row/`, and enables it in omarchy-shell,
+which mounts it at every login; the row's first connection starts the
+backend. Run it again after updating the binary: it replaces the plugin and
+restarts omarchy-shell, which otherwise keeps the old code.
+`omarchy-glance desktop off` removes the plugin (the backend stays
+installed). On a Touch Bar machine, `on` and `desktop on` work side by side
+and share one backend.
+
+Runtime dependencies, all part of Omarchy 4: Hyprland, Quickshell and
+omarchy-shell (third-party panel plugins), JetBrainsMono Nerd Font, PipeWire's
+`pactl`/`parec` (libpulse; mic widget), `dbus-monitor` (media widget),
+ImageMagick (text colour on a transparent bar, via `omarchy-bar-text-color`),
+and btop (graph colours and the graphs' tap action); the binary links cairo
+and fontconfig. Building needs Rust (stable). The release smoke check is in
+[docs/release-check.md](docs/release-check.md).
+
+For working on the QML, link the checkout's `desktop/` into place instead
+(`ln -sfn "$PWD/desktop" ~/.config/omarchy/plugins/glance.row`) and run
+`omarchy-restart-shell` after edits ([desktop-client.md](docs/desktop-client.md#panel-plugin)).
+
 ## Switching renderers
 
 ```
 omarchy-glance on            # install the backend and use this Touch Bar client
 omarchy-glance off           # back to the t1bridge built-in bar
+omarchy-glance desktop on    # install the backend and the desktop row's plugin
+omarchy-glance desktop off   # remove the desktop row
 omarchy-glance restart       # restart the backend and the bar after rebuilding
-omarchy-glance status        # which renderer is selected, and both services
+omarchy-glance status        # which renderer is selected, the desktop row, and both services
 omarchy-glance log           # follow the client's and the backend's logs
 omarchy-glance config        # create ~/.config/omarchy-glance/touchbar.json if missing, print its path
 omarchy-glance config edit   # ... and open it in $EDITOR
@@ -89,9 +128,8 @@ A planned split into a backend service with Touch Bar and desktop clients (for
 machines without a Touch Bar) is documented in
 [ADR 0001](docs/adr/0001-multiple-output-architecture.md), with
 [implementation tasks](docs/multi-output-tasks.md). The backend and the Touch
-Bar client are in place; the desktop client's connection and host contract
-are in `desktop/` ([desktop-client.md](docs/desktop-client.md)), its widgets
-and the Omarchy panel plugin that hosts it are not yet implemented.
+Bar client and the desktop client (`desktop/`,
+[desktop-client.md](docs/desktop-client.md)) are in place.
 
 | Path | |
 |---|---|

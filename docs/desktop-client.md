@@ -152,12 +152,17 @@ two polls (about 20–40 ms) before it hides, which can't be avoided because
 nothing announces the bar's close in advance. It fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
 bar's font, under `desktop.json`'s overrides. It shows a row on the
 monitors `desktop.json` names (every monitor by default), as tall as its
-`height` or 1.5 times the bar (39 px). Install from the checkout:
+`height` or 1.5 times the bar (39 px).
+
+`omarchy-glance desktop on` installs it: the plugin files are compiled into
+the binary (`PLUGIN_FILES` in `src/cli.rs`, checked against `desktop/` by a
+test) and written to `~/.config/omarchy/plugins/glance.row/`. For
+development, link the checkout instead:
 
 ```sh
 ln -sfn ~/Work/omarchy-glance/desktop ~/.config/omarchy/plugins/glance.row
 omarchy-shell shell rescanPlugins
-omarchy-shell shell setPluginEnabled glance.row true   # false to remove it
+omarchy-shell shell setPluginEnabled glance.row true   # "unknown" until the rescan finishes
 ```
 
 The shell notices changed files and reloads its plugins, but a running

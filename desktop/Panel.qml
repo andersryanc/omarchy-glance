@@ -36,23 +36,29 @@ Item {
 
   // Hyprland stacks exclusive zones in map order, so the row must map after
   // the bar. A scale or monitor change recreates the bar's windows: hide the
-  // row as soon as the bar closes and map it again right after the bar
-  // reopens, so the wrong order is never on screen.
+  // row as soon as the bar closes, and once the bar is back, map the row
+  // again when layers and monitors have been quiet for a moment, fading its
+  // content in, so the change settles before the row returns.
   property bool mapped: true
+  property bool barOpen: true
+  readonly property var settleEvents: ["openlayer", "closelayer", "configreloaded", "monitoradded", "monitorremoved", "monitoraddedv2", "monitorremovedv2"]
   Connections {
     target: Hyprland
     function onRawEvent(event) {
-      if (event.data !== "omarchy-bar") return
-      if (event.name === "closelayer") {
+      if (event.data === "omarchy-bar" && event.name === "closelayer") {
+        root.barOpen = false
         root.mapped = false
         fallback.restart()
-      } else if (event.name === "openlayer") {
+      } else if (event.data === "omarchy-bar" && event.name === "openlayer") {
+        root.barOpen = true
         root.mapped = false // a no-op unless the bar opened while the row was up
-        show.restart()
+        settle.restart()
+      } else if (!root.mapped && root.barOpen && root.settleEvents.includes(event.name)) {
+        settle.restart()
       }
     }
   }
-  Timer { id: show; interval: 16; onTriggered: { fallback.stop(); root.mapped = true } }
+  Timer { id: settle; interval: 250; onTriggered: { fallback.stop(); root.mapped = true } }
   Timer { id: fallback; interval: 2000; onTriggered: root.mapped = true } // the bar didn't come back
 
   Variants {
@@ -72,7 +78,11 @@ Item {
       WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
       color: "transparent"
 
+      onVisibleChanged: if (visible) fadeIn.restart()
+      NumberAnimation { id: fadeIn; target: row; property: "opacity"; from: 0; to: 1; duration: 150 }
+
       GlanceRow {
+        id: row
         anchors.fill: parent
         host: env
         output: "touchbar" // until the backend serves desktop.json (T08)

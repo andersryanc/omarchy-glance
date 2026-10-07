@@ -103,11 +103,12 @@ mounts it at startup once enabled. `Panel.qml` puts a `PanelWindow`
 zone) at the top of each screen, `Style.bar.sizeHorizontal` (26 px) high, and
 keeps itself mapped after the bar (Hyprland stacks exclusive zones in map
 order, and a scale or monitor change recreates the bar's windows): it hides
-on `closelayer>>omarchy-bar` and maps again 16 ms after
-`openlayer>>omarchy-bar`, or after 2 s if the bar doesn't come back. Polling
-`hyprctl layers` during a scale change shows the row at the top for one poll
-(about 20 ms) before it hides, and absent for about 100 ms while the bar is
-recreated; the wrong order is never shown otherwise. It fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
+on `closelayer>>omarchy-bar`, and once `openlayer>>omarchy-bar` arrives it
+maps again after 250 ms without layer or monitor events (or after 2 s if
+the bar doesn't come back), fading its content in over 150 ms. Polling
+`hyprctl layers` during a scale change shows the row at the top for one or
+two polls (about 20–40 ms) before it hides, which can't be avoided because
+nothing announces the bar's close in advance. It fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
 bar's font. Until T08 it shows the Touch Bar config. Install from the
 checkout:
 

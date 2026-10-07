@@ -1798,7 +1798,7 @@ fn graph_columns(s: &Spec) -> usize {
 
 fn meter_width(s: &Spec) -> i32 {
     let stacked = text(s, "layout", "") == "stacked";
-    int(s, "meterWidth", if stacked { 50 } else { 200 }) as i32
+    int(s, "meterWidth", if stacked { 50 } else { 80 }) as i32
 }
 
 /// Which part of a media widget x falls in: previous, playPause, next, title.

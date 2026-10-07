@@ -74,7 +74,7 @@ hardware-specific parts are bar-wide (see [Bar behaviour](#bar-behaviour)).
   `" ("`); with no limits, placeholders "Session" and "Weekly" showing "—".
 - Presentation: `agent` (`"claude"`) also picks the icon (Claude and Codex
   logos built in, otherwise the agents glyph); `layout` (`"row"` or
-  `"stacked"`); `meterWidth` (200 row, 50 stacked); `shortLabels`;
+  `"stacked"`); `meterWidth` (80 row, 50 stacked); `shortLabels`;
   `resets` (`"time"`, `"countdown"`, `"none"`); `timeFormat` (`%H:%M`),
   `dayTimeFormat` (`%a %H:%M`). Reset text depends on the wall clock, so the
   widget redraws every minute. Meters turn `colors.urgent` at 90%. The row

@@ -78,7 +78,7 @@ implement the backend protocol.
 | Providers (backend) | Samples, usage records, media state, microphone levels, command output | Geometry, drawing, outputs |
 | Core (backend) | Config reload, stable widget identity, visibility, action availability, timers, per-client sessions and demand | Cairo/QML objects, pixel geometry |
 | Actions (backend) | Shell execution, press/release and repeat scheduling, cancellation, results | Drawing, hardware keys |
-| Touch Bar client | Layout within 2060 px, Cairo drawing, press feedback, touch contacts, Fn layer, idle dimming, `TapKeys`, display and keyboard-backlight IPC | Providers, shell commands, config parsing beyond its own section |
+| Touch Bar client | Layout within 2060 px, Cairo drawing, press feedback, touch contacts, Fn layer, idle dimming, `TapKeys` (later, if approved, display and keyboard-backlight IPC) | Providers, shell commands, config parsing beyond its own section |
 | Desktop client | QML layout and controls, mouse input, theme/host environment, window placement | Providers, shell commands |
 
 Widget state is structured data: graph samples and ranges, media title and
@@ -97,8 +97,8 @@ mid-press cannot leave an action repeating.
 Each widget kind and feature is labelled by the outputs that support it. The
 labels go in the README widget table and in the backend's capability data, so a
 client can reject or hide a widget it does not support, with a log message,
-rather than silently drawing nothing. Draft labels, to be confirmed while
-inventorying the code (task T01):
+rather than silently drawing nothing. Labels confirmed by the inventory in
+[`../widget-inventory.md`](../widget-inventory.md) (task T01):
 
 | Widget / feature | Touch Bar | Desktop | Notes |
 | --- | --- | --- | --- |
@@ -113,7 +113,10 @@ inventorying the code (task T01):
 | `glance.spacer` | yes | yes | Sizes are per-output |
 | Fn layer | yes | no | Driven by the physical Fn key |
 | Idle dimming | yes | no | |
-| Display brightness, keyboard backlight via t1bridge IPC | yes | no | |
+| `debug.*` (background, border, test pattern) | yes | no | |
+| `repeatDelay`, `repeatInterval` | yes | yes | Applied by the backend, from the pressing output's file |
+| `colors`, `font` | yes | yes | Desktop defaults to the host theme |
+| Display brightness, keyboard backlight via t1bridge IPC | proposed | no | Not used today; see `TODO.md` |
 
 New widgets and proposals in `TODO.md` must state their label.
 

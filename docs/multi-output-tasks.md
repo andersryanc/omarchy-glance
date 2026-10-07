@@ -50,12 +50,15 @@ any pixel difference. Dependencies: none.
 
 ### T01 — Inventory widgets and label output support
 
-- [ ] Go through every widget kind, option, and behavior in `renderer.rs` and
+- [x] Go through every widget kind, option, and behavior in `renderer.rs` and
   record which provider it needs, which actions it runs, and what is
   hardware-specific.
-- [ ] Confirm the draft Touch Bar / desktop labels in the ADR and add them to
+- [x] Confirm the draft Touch Bar / desktop labels in the ADR and add them to
   the README widget table.
-- [ ] List state that each widget needs to draw it, and its presentation options.
+- [x] List state that each widget needs to draw it, and its presentation options.
+
+Result: [widget-inventory.md](widget-inventory.md), with open questions for
+review at the end.
 
 Acceptance: every widget kind and option is labelled; open questions are listed
 for review. Dependencies: none.

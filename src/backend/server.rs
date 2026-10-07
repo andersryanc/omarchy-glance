@@ -200,15 +200,24 @@ impl Server {
 
     fn read(&mut self, fd: RawFd, t: f64) {
         let Some(c) = self.clients.get_mut(&fd) else { return };
+        let closing = self.backend.closing(c.session);
         let mut buf = [0u8; 65536];
         let mut eof = false;
-        loop {
+        // At most a line's worth per turn, so one client can't hold up the
+        // rest; what's left waits in the socket for the next turn.
+        let mut taken = 0;
+        while taken < MAX_LINE {
             match c.stream.read(&mut buf) {
                 Ok(0) => {
                     eof = true;
                     break;
                 }
-                Ok(n) => c.rbuf.extend_from_slice(&buf[..n]),
+                Ok(n) => {
+                    taken += n;
+                    if !closing {
+                        c.rbuf.extend_from_slice(&buf[..n]); // a closing session's input is dropped
+                    }
+                }
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => break,
                 Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
                 Err(_) => {
@@ -220,16 +229,19 @@ impl Server {
         let session = c.session;
         let mut lines = vec![];
         let mut too_large = false;
-        while let Some(end) = c.rbuf.iter().position(|&b| b == b'\n') {
-            let line: Vec<u8> = c.rbuf.drain(..=end).collect();
-            if line.len() > MAX_LINE {
+        let mut start = 0;
+        while let Some(end) = c.rbuf[start..].iter().position(|&b| b == b'\n').map(|i| start + i) {
+            if end + 1 - start > MAX_LINE {
                 too_large = true;
                 break;
             }
-            lines.push(String::from_utf8_lossy(&line[..line.len() - 1]).into_owned());
+            lines.push(String::from_utf8_lossy(&c.rbuf[start..end]).into_owned());
+            start = end + 1;
         }
-        if c.rbuf.len() >= MAX_LINE {
+        c.rbuf.drain(..start);
+        if too_large || c.rbuf.len() >= MAX_LINE {
             too_large = true;
+            c.rbuf.clear();
         }
         for line in lines {
             if !line.trim().is_empty() {

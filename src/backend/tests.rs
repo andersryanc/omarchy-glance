@@ -624,3 +624,20 @@ fn stuck_client_with_a_due_update_does_not_spin() {
     }
     assert!(start.elapsed() >= Duration::from_millis(200), "polled without waiting: {:?}", start.elapsed());
 }
+
+#[test]
+fn many_short_lines_are_cheap() {
+    let mut ts = TestServer::new("short-lines", json!({"default": {"left": []}}));
+    let (mut s, mut r) = ts.client();
+    s.write_all(HELLO).unwrap();
+    ts.expect(&mut r, |m| m["type"] == "snapshot");
+    let writer = std::thread::spawn(move || {
+        s.write_all(&vec![b'\n'; 4 << 20]).unwrap(); // blank lines, which get no reply
+        s.write_all(b"{\"type\":\"resync\",\"id\":9}\n").unwrap();
+        s
+    });
+    let start = Instant::now();
+    ts.expect(&mut r, |m| m["id"] == 9);
+    assert!(start.elapsed() < Duration::from_secs(2), "{:?}", start.elapsed());
+    drop(writer.join());
+}

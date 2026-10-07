@@ -16,7 +16,7 @@ Face {
   readonly property real dotRadius: view.px(view.opt("dotSize", view.opt("dotSpacing", 4) * 0.32))
   readonly property bool bars: o.style === "bars"
   readonly property bool grid: o.grid === undefined || !!o.grid
-  readonly property int columns: Math.max(1, Math.floor(view.opt("graphWidth", 100) / view.opt("dotSpacing", 4)))
+  readonly property int columns: Math.max(1, Math.floor(view.opt("graphWidth", 50) / view.opt("dotSpacing", 4)))
   readonly property var stops: Util.gradients(id_, o, host.btop)
   readonly property color gridColor: Qt.alpha(host.foreground, 0.12)
   readonly property real fontSize: view.px(view.opt("fontSize", host.fontSize / host.scale))

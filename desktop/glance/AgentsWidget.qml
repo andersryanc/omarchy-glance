@@ -13,7 +13,7 @@ Face {
   readonly property bool stacked: o.layout === "stacked"
   readonly property real pad: view.px(12)
   readonly property real gap: view.px(10)
-  readonly property real meterW: view.px(view.opt("meterWidth", stacked ? 90 : 170))
+  readonly property real meterW: view.px(view.opt("meterWidth", stacked ? 50 : 170))
   readonly property real iconSize: Math.min(height - view.px(12), view.px(24))
   readonly property real small: host.fontSize * 0.9
   readonly property string agent: String(o.agent ?? "claude")

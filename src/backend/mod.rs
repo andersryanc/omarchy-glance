@@ -684,7 +684,7 @@ impl Backend {
                 let Some(key) = &w.provider else { continue };
                 let columns = if w.kind == WidgetKind::Graph {
                     let sp = int(&w.spec, "dotSpacing", 4).max(2);
-                    (int(&w.spec, "graphWidth", 100) / sp).max(1) as usize
+                    (int(&w.spec, "graphWidth", crate::config::GRAPH_WIDTH) / sp).max(1) as usize
                 } else {
                     0
                 };

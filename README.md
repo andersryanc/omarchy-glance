@@ -194,7 +194,7 @@ inventory is in [docs/widget-inventory.md](docs/widget-inventory.md).
 | Widget | Outputs | Options |
 |---|---|---|
 | `glance.esc` | TB | `width` (140). Sends Esc. |
-| `glance.agents` | TB, D | `agent` (`"claude"`; any record in `~/.local/state/omarchy/agents/usage/`), `layout` (`"row"`: meters side by side with their names above, shortened to fit a narrow `meterWidth`: short labels, then no percent, then no reset time; `"stacked"`: meters on top of each other with short labels on the left), `meterWidth` (200, or 120 stacked), `shortLabels` (stacked and narrow row labels, default `{"Session": "5h", "Weekly": "7d"}`), `resets` (when each limit resets: `"time"` shows the clock time, with the weekday when it's more than a day away; `"countdown"` shows time left, e.g. `4h 12m`; `"none"`), `timeFormat` / `dayTimeFormat` (strftime, `"%H:%M"` / `"%a %H:%M"`), `onTap` (toggles the Omarchy agents panel; `""` for nothing). |
+| `glance.agents` | TB, D | `agent` (`"claude"`; any record in `~/.local/state/omarchy/agents/usage/`), `layout` (`"row"`: meters side by side with their names above, shortened to fit a narrow `meterWidth`: short labels, then no percent, then no reset time; `"stacked"`: meters on top of each other with short labels on the left), `meterWidth` (200, or 50 stacked), `shortLabels` (stacked and narrow row labels, default `{"Session": "5h", "Weekly": "7d"}`), `resets` (when each limit resets: `"time"` shows the clock time, with the weekday when it's more than a day away; `"countdown"` shows time left, e.g. `4h 12m`; `"none"`), `timeFormat` / `dayTimeFormat` (strftime, `"%H:%M"` / `"%a %H:%M"`), `onTap` (toggles the Omarchy agents panel; `""` for nothing). |
 | `glance.mic` | TB, D | Mic mute toggle with a live waveform while an app records. See [Microphone](#microphone). |
 | `glance.media` | TB, D | Previous, play/pause and next keys and the current track. See [Media](#media). |
 | `glance.cpu`, `.memory`, `.gpu`, `.network`, `.disk`, `.battery`, `.fan` | TB, D | A label, a btop-style dot graph of recent history, and the current value. See [Graphs](#graphs). |
@@ -262,7 +262,7 @@ Options for all graphs:
 | Option | Default | |
 |---|---|---|
 | `label` | `"cpu"`, `"mem"`, … | Text before the graph (`""` for none). |
-| `graphWidth` | `100` | Graph width in px. History is `graphWidth / dotSpacing` samples. |
+| `graphWidth` | `50` | Graph width in px. History is `graphWidth / dotSpacing` samples. |
 | `interval` | `1` | Seconds between samples. |
 | `style` | `"dots"` | `"dots"`, or `"bars"` for solid columns. |
 | `dotSpacing`, `dotSize` | `4`, `1.28` | Dot pitch and radius in px. |
@@ -399,7 +399,7 @@ Touch Bar) comes with T11.
 The row draws each widget like the Touch Bar does (the same graphs, meters
 and keys), in the theme's colours and the bar's font, so sizes differ: option
 sizes are desktop pixels, and the defaults suit a row about 40 px high: text
-at the theme's size, icons 1.6 times that, `meterWidth` 170 (90 stacked),
+at the theme's size, icons 1.6 times that, `meterWidth` 170 (50 stacked),
 media `buttonWidth` 44 and `titleWidth` 260, mic `waveformWidth` 80. Keys and
 commands size to their content unless they set `width`. Clicking presses on
 mouse down and releases on mouse up, so a held `repeat` button repeats; any

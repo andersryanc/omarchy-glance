@@ -74,7 +74,7 @@ hardware-specific parts are bar-wide (see [Bar behaviour](#bar-behaviour)).
   `" ("`); with no limits, placeholders "Session" and "Weekly" showing "—".
 - Presentation: `agent` (`"claude"`) also picks the icon (Claude and Codex
   logos built in, otherwise the agents glyph); `layout` (`"row"` or
-  `"stacked"`); `meterWidth` (200 row, 120 stacked); `shortLabels`;
+  `"stacked"`); `meterWidth` (200 row, 50 stacked); `shortLabels`;
   `resets` (`"time"`, `"countdown"`, `"none"`); `timeFormat` (`%H:%M`),
   `dayTimeFormat` (`%a %H:%M`). Reset text depends on the wall clock, so the
   widget redraws every minute. Meters turn `colors.urgent` at 90%. The row
@@ -105,7 +105,7 @@ hardware-specific parts are bar-wide (see [Bar behaviour](#bar-behaviour)).
   per-core fractions (cpu `cores`), the battery icon (picked from charge and
   charging state), and an error flag (logged once; the graph keeps its old
   history).
-- Presentation: `label`, `graphWidth` (100), `dotSpacing` (4), `dotSize`,
+- Presentation: `label`, `graphWidth` (50), `dotSpacing` (4), `dotSize`,
   `style` (`"dots"`/`"bars"`), `grid`, `gradient`, `showValue`, `fontSize`
   (18), `cores` (also a provider option), battery level meter. History length
   is `graphWidth / dotSpacing`. Without `gradient`, colours come from btop's

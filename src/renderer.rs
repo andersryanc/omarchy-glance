@@ -1793,12 +1793,12 @@ fn dot_style(s: &Spec) -> DotStyle {
 }
 
 fn graph_columns(s: &Spec) -> usize {
-    (int(s, "graphWidth", 100) / i64::from(dot_style(s).sp)).max(1) as usize
+    (int(s, "graphWidth", crate::config::GRAPH_WIDTH) / i64::from(dot_style(s).sp)).max(1) as usize
 }
 
 fn meter_width(s: &Spec) -> i32 {
     let stacked = text(s, "layout", "") == "stacked";
-    int(s, "meterWidth", if stacked { 120 } else { 200 }) as i32
+    int(s, "meterWidth", if stacked { 50 } else { 200 }) as i32
 }
 
 /// Which part of a media widget x falls in: previous, playPause, next, title.

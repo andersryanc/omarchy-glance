@@ -10,6 +10,7 @@ pub type Rgb = [f64; 3]; // 0-255 per channel
 
 pub const SECTIONS: [&str; 3] = ["left", "center", "right"];
 pub const DEFAULT_CONFIG: &str = include_str!("../touchbar.default.json");
+pub const GRAPH_WIDTH: i64 = 50; // a graph's default `graphWidth`, on both outputs
 
 pub fn home() -> PathBuf {
     std::env::var_os("HOME").map_or_else(|| PathBuf::from("/"), PathBuf::from)

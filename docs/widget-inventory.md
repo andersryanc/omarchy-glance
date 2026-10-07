@@ -119,7 +119,8 @@ hardware-specific parts are bar-wide (see [Bar behaviour](#bar-behaviour)).
   excluded by PID). While another app records, the mic is live, `waveform` is
   on, and a mic widget is on the visible layer, it runs `parec` (8 kHz mono)
   and turns it into `fps` (20) levels a second; otherwise no capture runs.
-  One `Mic` serves all mic widgets; `fps` comes from the first.
+  One `Mic` serves all mic widgets, on every output, at the highest `fps`
+  any of them asks for; a config reload applies a change.
 - State: muted (unknown until read), in use, recent levels.
 - Presentation: `iconSize` (30), `width` (140, while not recording),
   `waveformWidth` (120), `activeColor`, `mutedColor`, `dotSpacing`,
@@ -132,7 +133,8 @@ hardware-specific parts are bar-wide (see [Bar behaviour](#bar-behaviour)).
   only while the widget is on the visible layer, and 0.15 s after
   `dbus-monitor` reports an MPRIS `PropertiesChanged` or a player appearing or
   leaving. `dbus-monitor` runs while any media widget exists and restarts
-  within 5 s if it dies.
+  within 5 s if it dies. One provider serves all media widgets, on every
+  output, at the shortest positive `interval` among them.
 - State: `hasMedia`, `playing`, `title`, `artist`, `identity`,
   `canGoPrevious`, `canTogglePlaying`, `canGoNext`.
 - Presentation: `buttonWidth` (100), `titleWidth` (360), `iconSize` (28);

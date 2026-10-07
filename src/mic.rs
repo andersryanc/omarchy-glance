@@ -43,10 +43,19 @@ pub enum MicFd {
     Audio,
 }
 
+/// Bytes of 16-bit audio per level sample, for `fps` samples a second.
+fn frame_bytes(fps: i64) -> usize {
+    2 * (RATE / fps.max(1) as usize).max(1)
+}
+
 impl Mic {
+    pub fn set_fps(&mut self, fps: i64) {
+        self.frame_bytes = frame_bytes(fps);
+    }
+
     pub fn new(fps: i64) -> Mic {
         Mic {
-            frame_bytes: 2 * (RATE / fps.max(1) as usize).max(1),
+            frame_bytes: frame_bytes(fps),
             muted: None,
             in_use: false,
             levels: VecDeque::with_capacity(512),

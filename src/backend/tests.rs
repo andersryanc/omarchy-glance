@@ -328,6 +328,35 @@ fn config_reload_sends_snapshot_and_ends_presses() {
 }
 
 #[test]
+fn shared_mic_and_media_follow_config_changes() {
+    let dir = Dir::new("shared-options");
+    let config = |fps: i64, interval: f64| json!({"default": {"left": [
+        {"id": "glance.mic", "fps": fps}, {"id": "glance.media", "interval": interval}
+    ]}});
+    dir.write_config(config(10, 30.0));
+    let mut b = dir.backend();
+    hello(&mut b);
+    let options = |b: &Backend| match (&b.providers[&ProviderKey::Mic], &b.providers[&ProviderKey::Media]) {
+        (Provider::Mic(_, fps), Provider::Media(m)) => (*fps, m.status.interval()),
+        _ => unreachable!(),
+    };
+    assert_eq!(options(&b), (10, 30.0));
+
+    // A reload changes them in place.
+    dir.write_config(config(40, 5.0));
+    b.load_config(Output::Touchbar);
+    b.sync_providers(now());
+    assert_eq!(options(&b), (40, 5.0));
+
+    // Two outputs: the higher fps and the shorter interval win, whichever said hello first.
+    fs::write(dir.0.join("desktop.json"), json!({"version": 1, "left": [
+        {"id": "glance.mic", "fps": 60}, {"id": "glance.media", "interval": 10}
+    ]}).to_string()).unwrap();
+    hello_as(&mut b, "desktop");
+    assert_eq!(options(&b), (60, 5.0));
+}
+
+#[test]
 fn desktop_default_and_settings() {
     let dir = Dir::new("desktop-default");
     let mut b = dir.backend();

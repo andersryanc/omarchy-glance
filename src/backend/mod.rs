@@ -179,6 +179,15 @@ enum Out {
     Snapshot,
 }
 
+/// What the widgets sharing a provider ask of it.
+struct Need {
+    kind: WidgetKind,
+    spec: Spec,
+    columns: usize,
+    fps: i64,
+    interval: f64,
+}
+
 struct Press {
     widget: String,
     next: Option<f64>, // next repeat
@@ -667,7 +676,9 @@ impl Backend {
     fn sync_providers(&mut self, t: f64) {
         let active = self.active_outputs();
         self.outputs.retain(|o, _| active.contains(o));
-        let mut needed: HashMap<ProviderKey, (WidgetKind, Spec, usize)> = HashMap::new();
+        // A provider shared by several widgets serves the most demanding:
+        // the widest graph, the highest mic fps, the shortest media interval.
+        let mut needed: HashMap<ProviderKey, Need> = HashMap::new();
         for oc in self.outputs.values() {
             for w in &oc.widgets {
                 let Some(key) = &w.provider else { continue };
@@ -677,8 +688,15 @@ impl Backend {
                 } else {
                     0
                 };
-                let entry = needed.entry(key.clone()).or_insert((w.kind, w.spec.clone(), columns));
-                entry.2 = entry.2.max(columns);
+                let fps = int(&w.spec, "fps", 20);
+                let interval = crate::config::num(&w.spec, "interval", 30.0);
+                let need = needed.entry(key.clone())
+                    .or_insert(Need { kind: w.kind, spec: w.spec.clone(), columns, fps, interval });
+                need.columns = need.columns.max(columns);
+                need.fps = need.fps.max(fps);
+                if interval > 0.0 && (need.interval <= 0.0 || interval < need.interval) {
+                    need.interval = interval;
+                }
             }
         }
         self.providers.retain(|key, p| {
@@ -688,9 +706,14 @@ impl Backend {
             }
             keep
         });
-        for (key, (kind, spec, columns)) in needed {
+        for (key, Need { kind, spec, columns, fps, interval }) in needed {
             match self.providers.get_mut(&key) {
                 Some(Provider::Graph(g)) if g.columns != columns => g.set_columns(columns),
+                Some(Provider::Media(m)) => m.set_interval(interval),
+                Some(Provider::Mic(m, old)) if *old != fps => {
+                    m.set_fps(fps);
+                    *old = fps;
+                }
                 Some(_) => {}
                 None => {
                     let provider = match kind {
@@ -701,11 +724,8 @@ impl Backend {
                             usage.poll(&self.paths.usage_dir); // so the first snapshot has it
                             Provider::Usage(usage)
                         }
-                        WidgetKind::Media => Provider::Media(Media::new(crate::config::num(&spec, "interval", 30.0))),
-                        WidgetKind::Mic => {
-                            let fps = int(&spec, "fps", 20);
-                            Provider::Mic(Mic::new(fps), fps)
-                        }
+                        WidgetKind::Media => Provider::Media(Media::new(interval)),
+                        WidgetKind::Mic => Provider::Mic(Mic::new(fps), fps),
                         _ => continue,
                     };
                     // New providers only come with a new session or config, which

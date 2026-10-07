@@ -85,6 +85,22 @@ impl Job {
         self.proc.is_some()
     }
 
+    #[cfg(test)]
+    pub fn interval(&self) -> f64 {
+        self.interval
+    }
+
+    /// A new interval, counted from the last run.
+    pub fn set_interval(&mut self, interval: f64) {
+        if interval == self.interval {
+            return;
+        }
+        self.interval = interval;
+        if self.next > 0.0 {
+            self.next = if interval > 0.0 { self.started + interval } else { f64::INFINITY };
+        }
+    }
+
     /// Start a run if one is due. Returns the output of a run that timed out.
     pub fn tick(&mut self, t: f64, what: &str) -> Option<String> {
         if self.proc.is_some() && t - self.started > COMMAND_TIMEOUT {
@@ -185,6 +201,10 @@ pub struct Media {
 impl Media {
     pub fn new(interval: f64) -> Media {
         Media { status: Job::new(MEDIA_STATUS, interval), watch: None, watch_at: 0.0, state: json!({}) }
+    }
+
+    pub fn set_interval(&mut self, interval: f64) {
+        self.status.set_interval(interval);
     }
 
     /// Run `dbus-monitor` (restarted within 5 s if it dies) and, while the

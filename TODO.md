@@ -31,6 +31,13 @@ waiting for a yes or no.
 - [ ] Stage 2: spike standalone Quickshell vs Omarchy panel-plugin hosts (T06).
 - [ ] Stage 3: desktop renderer for machines without a Touch Bar (T07–T11).
 
+## Bugs
+
+- [ ] Agents widget, `"layout": "row"`: a narrow `meterWidth` (e.g. 110) makes
+      the label, reset time and percentage overlap, because they're drawn
+      along the meter without checking for room. Found 2026-10-06 while
+      building the golden-test config; to review.
+
 ## Proposed
 
 ### Desktop outputs

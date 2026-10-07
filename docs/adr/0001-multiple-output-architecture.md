@@ -199,9 +199,9 @@ size, transparency, visibility) and make no assumption about their window.
 Two hosts are candidates, to be compared by a spike before the desktop
 renderer is built:
 
-- **Standalone Quickshell `PanelWindow`** (layer-shell). It works on any
-  layer-shell compositor and is the portable baseline for machines that are
-  not running Omarchy.
+- **Standalone Quickshell `PanelWindow`** (layer-shell). It runs beside
+  `omarchy-shell` rather than inside it, so a failure in one can't take down
+  the other.
 - **Omarchy third-party `panel` plugin.** It runs inside `omarchy-shell` and
   receives `PluginBarStateApi` (`barHidden`, `barSize`, `fontFamily`,
   `position`), which the shell provides "for plugins that position independent
@@ -248,8 +248,10 @@ remains future work and is not a prerequisite.
   compatible with it.
 - Media seeking needs position/duration support beyond `omarchy-shell media
   status`. Notifications need integration with the existing service; the
-  backend must not start a competing daemon. Non-Hyprland compositors need
-  capability checks.
+  backend must not start a competing daemon.
+- The project targets Omarchy only (decided 2026-10-06). Omarchy commands,
+  Hyprland and Quickshell can be assumed on every output; machines without
+  Omarchy are out of scope.
 
 ## Validation
 

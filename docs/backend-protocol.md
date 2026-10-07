@@ -5,8 +5,8 @@ and its output clients (the Touch Bar client first, a desktop client later)
 talk over this protocol; see [ADR 0001](adr/0001-multiple-output-architecture.md)
 for the architecture and [widget-inventory.md](widget-inventory.md) for the
 widgets it carries. This is a specification for T03 and T04; nothing
-implements it yet. Its open questions are settled here as proposals, marked
-**(proposal)**, for review.
+implements it yet. Decisions marked **(approved)** settle open questions from
+the inventory; the user approved them on 2026-10-06.
 
 ## Principles
 
@@ -47,7 +47,7 @@ Each message is one JSON object encoded as UTF-8 on a single line, ended by
 so a raw newline only ever ends a message.
 
 The ADR asked for length-prefixed JSON. Newline-delimited is chosen instead
-**(proposal)** because the desktop client is QML: Quickshell's `Socket` with a
+**(approved)** because the desktop client is QML: Quickshell's `Socket` with a
 `SplitParser` (split marker `"\n"` by default) delivers one message per line
 with no byte handling in JavaScript. On the Rust side it costs the same.
 
@@ -172,8 +172,8 @@ Each `state` object is replaced whole by updates.
 | `esc`, `button`, `spacer` | `{}` |
 | `command` | `{"text": "up 3d 4h", "urgent": false}` |
 | `agents` | `{"visible": bool, "limits": [{"label", "fraction" (0–1 or null), "resetsAt" (or null)}]}`; with no limits the backend sends the "Session"/"Weekly" placeholders with null fractions. Reset text is formatted by the client from its own clock (it redraws each minute). |
-| `graph` | `{"series": [[raw values, oldest first]], "scale": [one per series], "lines": [["23%", false]], "cores": [fractions], "battery": {"charge": 64, "status": "Discharging"} or null, "error": bool}`. Clients divide by `scale` for the 0–1 height. History is long enough for the longest graph sharing this provider; clients draw the newest samples that fit **(proposal)**. The client picks the battery glyph from `battery` **(proposal)**. |
-| `mic` | `{"muted": bool or null, "inUse": bool, "levels": [0–1, newest last], "fps": 20}`; `levels` is empty unless the capture is running. It holds the newest 64 levels **(proposal)**, enough for any waveform width the client draws. |
+| `graph` | `{"series": [[raw values, oldest first]], "scale": [one per series], "lines": [["23%", false]], "cores": [fractions], "battery": {"charge": 64, "status": "Discharging"} or null, "error": bool}`. Clients divide by `scale` for the 0–1 height. History is long enough for the longest graph sharing this provider; clients draw the newest samples that fit **(approved)**. The client picks the battery glyph from `battery` **(approved)**. |
+| `mic` | `{"muted": bool or null, "inUse": bool, "levels": [0–1, newest last], "fps": 20}`; `levels` is empty unless the capture is running. It holds the newest 64 levels **(approved)**, enough for any waveform width the client draws. |
 | `media` | `{"hasMedia", "playing", "title", "artist", "identity", "canGoPrevious", "canTogglePlaying", "canGoNext"}` as reported by `omarchy-shell media status`; `{}` before the first report. |
 
 ### Updates
@@ -236,7 +236,7 @@ and runs providers by today's rules:
 
 Sessions share providers when the widget id and its provider options match
 (see the inventory's open question 1), so a Touch Bar and a desktop row
-showing CPU sample `/proc/stat` once **(proposal)**. With no sessions, every
+showing CPU sample `/proc/stat` once **(approved)**. With no sessions, every
 provider stops and the mic capture closes. Until a client's first `view`, the
 backend assumes `{"layer":"default","shown":true}`.
 

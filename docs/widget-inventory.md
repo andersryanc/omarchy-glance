@@ -203,6 +203,10 @@ hardware-specific parts are bar-wide (see [Bar behaviour](#bar-behaviour)).
 
 ## Open questions
 
+Questions 1–4 are settled in [backend-protocol.md](backend-protocol.md) as
+proposed (approved 2026-10-06). Question 5 is settled: the project targets
+Omarchy only. Question 8 is noted in `TODO.md` under Bugs.
+
 1. **Shared providers.** Two widgets with the same `id` currently get separate
    sources (two cpu graphs sample `/proc/stat` twice). Proposal: the backend
    shares a provider between widgets, and between outputs, when the id and the
@@ -223,17 +227,21 @@ hardware-specific parts are bar-wide (see [Bar behaviour](#bar-behaviour)).
    picks its glyph.
 5. **Omarchy defaults on other desktops.** The default `onTap` commands (btop
    via `omarchy-launch-or-focus-tui`, the agents panel, `omarchy-audio-input-mute`,
-   `omarchy-shell media`) and the media provider assume Omarchy. Proposal: the
-   backend checks they exist and reports the action as unavailable rather than
-   failing silently; desktop support without Omarchy stays out of scope until
-   T11.
+   `omarchy-shell media`) and the media provider assume Omarchy. Settled: the
+   project targets Omarchy only, so these can be assumed everywhere.
 6. **Mic demand on the desktop.** The capture runs only while a mic widget is
    visible. A desktop row is always visible unless its host hides it, so the
    desktop client must report hidden/visible for demand to be right.
-7. **Theme on the desktop.** Graph gradients follow btop's theme on the Touch
-   Bar. Should the desktop do the same, or use the host palette? Proposal:
-   btop's theme for graphs on both (it follows the Omarchy theme), the host
-   palette for everything else.
+7. **Graph colours on the desktop.** On the Touch Bar, graph gradients default
+   to btop's current theme (`cpu_*`, `used_*`, `download_*`/`upload_*`,
+   `temp_*` start/mid/end), while key faces and text use fixed colours from
+   `touchbar.json`. Omarchy generates `btop.theme` and the shell palette
+   (`shell.toml`) from the same theme `colors.toml`, so both follow theme
+   changes. For the desktop row, either keep btop's three-stop gradients (the
+   graphs look like btop and like the Touch Bar) or derive graph colours from
+   the shell palette (they match the rest of the bar but lose the per-series
+   gradients). Proposal: btop's gradients for graphs, the shell palette for
+   everything else; `gradient` overrides either way. Decide by T09.
 8. **Narrow `meterWidth` in the row agents layout** makes labels, reset times
    and percentages overlap (seen while building the golden config). It's a
    presentation bug, separate from the split.

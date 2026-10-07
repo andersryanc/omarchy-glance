@@ -73,8 +73,8 @@ for review. Dependencies: none.
 
 Result: [backend-protocol.md](backend-protocol.md). It resolves the T01 open
 questions on shared providers, history length, repeat timings and the battery
-icon as proposals for review, and uses newline-delimited rather than
-length-prefixed JSON for the QML client.
+icon, and uses newline-delimited rather than length-prefixed JSON for the QML
+client; the user approved these decisions on 2026-10-06.
 
 Acceptance: worked examples cover connect, update, press/hold/release,
 disconnect mid-press, backend restart, and an unsupported widget. Clients
@@ -195,8 +195,8 @@ backend restart; no reservation remains after exit. Dependencies: T09.
 
 - [ ] Installation that does not require t1bridge or a checkout at a fixed
   path; autostart of backend and desktop host.
-- [ ] Record runtime dependencies (Quickshell, Hyprland or other compositor
-  requirements, Nerd Font).
+- [ ] Record runtime dependencies (Omarchy, which brings Hyprland, Quickshell
+  and the Nerd Font).
 - [ ] Release smoke check: widgets, reload, reconnection, reservation, focus,
   theme, scaling, monitor changes, and running alongside the Touch Bar.
 

@@ -1,5 +1,5 @@
-// A key face: the control's fill, lighter while hovered, the pressed fill
-// while held. Press feedback is local and doesn't wait for the backend.
+// A key face: the control's fill with no border, lighter while hovered,
+// the pressed fill while held. Press feedback is local and doesn't wait for the backend.
 import QtQuick
 
 Rectangle {
@@ -9,6 +9,4 @@ Rectangle {
 
   radius: 6 * host.scale
   color: pressed ? host.pressedFill : hovered ? host.hoverFill : host.fill
-  border.width: host.border.a > 0 ? 1 : 0
-  border.color: host.border
 }

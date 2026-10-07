@@ -35,7 +35,6 @@ Item {
     fill: Style.normalFill
     hoverFill: Style.hoverFill
     pressedFill: Style.pressedFill
-    border: Style.normalBorderColor
     btop: btop.colors
     agentIcons: "file:///usr/share/omarchy/shell/plugins/agents/assets/"
     fontFamily: glanceClient.font(root.bar && root.bar.fontFamily ? root.bar.fontFamily : Style.font.family)
@@ -85,7 +84,7 @@ Item {
       // The first release is a top row only; it stays at the top when the
       // bar moves to another edge or hides.
       anchors { top: true; left: true; right: true }
-      implicitHeight: glanceClient.settings.height || 2 * Style.bar.sizeHorizontal // twice the bar, unless desktop.json says
+      implicitHeight: glanceClient.settings.height || Math.round(1.5 * Style.bar.sizeHorizontal) // 1.5 times the bar, unless desktop.json says
       exclusionMode: ExclusionMode.Auto
       WlrLayershell.namespace: "omarchy-glance"
       WlrLayershell.layer: WlrLayer.Top

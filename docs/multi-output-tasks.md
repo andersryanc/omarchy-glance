@@ -207,7 +207,7 @@ state and shows a coherent disconnected state. Dependencies: T05, T06.
 Done 2026-10-07: `desktop.default.json`, `Config::parse_desktop`, the
 `desktop` output in the backend, `omarchy-glance config desktop`, and the
 README's [Desktop row](../README.md#desktop-row) section. The default row is
-twice the bar's height (the user's call). The plugin already applies
+1.5 times the bar's height (the user's call; first twice, then reduced). The plugin already applies
 `monitor` and `height`. Not run on a machine without t1bridge; the backend
 has no t1bridge code, and `tools/desktop-check.sh` runs a backend with only
 a desktop session.

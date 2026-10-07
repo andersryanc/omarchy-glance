@@ -325,7 +325,7 @@ them out.
 | Key | Default | |
 |---|---|---|
 | `monitor` | every monitor | A monitor name (`"eDP-1"`, as in `hyprctl monitors`) or a list of names. |
-| `height` | twice the bar's height | Row height in pixels (10 to 200). |
+| `height` | 1.5 times the bar's height (39 px) | Row height in pixels (10 to 200). |
 | `colors.background`, `foreground`, `accent`, `urgent`, `muted` | the Omarchy theme | `#rrggbb` overrides of the live theme. |
 | `font` | the bar's font | Font family. |
 | `repeatDelay`, `repeatInterval` | `0.4`, `0.12` | As for the Touch Bar. |
@@ -357,7 +357,7 @@ Touch Bar) comes with T11.
 
 The row draws each widget like the Touch Bar does (the same graphs, meters
 and keys), in the theme's colours and the bar's font, so sizes differ: option
-sizes are desktop pixels, and the defaults suit a row about 50 px high: text
+sizes are desktop pixels, and the defaults suit a row about 40 px high: text
 at the theme's size, icons 1.6 times that, `meterWidth` 170 (90 stacked),
 media `buttonWidth` 44 and `titleWidth` 260, mic `waveformWidth` 80. Keys and
 commands size to their content unless they set `width`. Clicking presses on

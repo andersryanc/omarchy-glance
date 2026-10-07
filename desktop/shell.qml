@@ -53,7 +53,7 @@ ShellRoot {
       host: env
       client: glanceClient
       anchors { left: parent.left; right: parent.right; top: parent.top }
-      height: (glanceClient.settings.height || 52) * env.scale
+      height: (glanceClient.settings.height || 39) * env.scale
       visible: env.shown
     }
 

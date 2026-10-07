@@ -38,7 +38,7 @@ create a window, read theme or shell files, or talk to the compositor.
 GlanceClient { id: glanceClient }   // output "desktop"
 GlanceHost { id: env; background: glanceClient.color("background", Color.bar.background) /* … */ }
 PanelWindow {
-  implicitHeight: glanceClient.settings.height || 2 * Style.bar.sizeHorizontal
+  implicitHeight: glanceClient.settings.height || Math.round(1.5 * Style.bar.sizeHorizontal)
   GlanceRow { anchors.fill: parent; host: env; client: glanceClient }
 }
 ```
@@ -46,7 +46,7 @@ PanelWindow {
 | `GlanceHost` property | Meaning | Panel plugin (T10) |
 | --- | --- | --- |
 | `background`, `foreground`, `accent`, `urgent`, `muted` | Palette | `Color.*` |
-| `fill`, `pressedFill`, `border` | A control's face, pressed face and border | `Style.normalFill`, `Style.pressedFill`, `Style.normalBorderColor` |
+| `fill`, `hoverFill`, `pressedFill` | A control's face (no border), hovered and pressed | `Style.normalFill`, `Style.hoverFill`, `Style.pressedFill` |
 | `fontFamily`, `fontSize` | Family and base size in logical pixels | `shell.bar.fontFamily`, the `Style` type scale |
 | `scale` | Multiplier for sizes inside the row (padding, gaps, widths), on top of the screen's device pixel ratio, which Qt applies already | 1, or from `Style` |
 | `transparent` | Draw no row background; the host's surface shows through | `bar.transparent` from `shell.json` |
@@ -151,7 +151,7 @@ two polls (about 20–40 ms) before it hides, which can't be avoided because
 nothing announces the bar's close in advance. It fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
 bar's font, under `desktop.json`'s overrides. It shows a row on the
 monitors `desktop.json` names (every monitor by default), as tall as its
-`height` or twice the bar. Install from the checkout:
+`height` or 1.5 times the bar (39 px). Install from the checkout:
 
 ```sh
 ln -sfn ~/Work/omarchy-glance/desktop ~/.config/omarchy/plugins/glance.row

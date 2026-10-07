@@ -16,7 +16,7 @@ ShellRoot {
   }
   FloatingWindow {
     implicitWidth: Number(Quickshell.env("GLANCE_WIDTH") || 1440)
-    implicitHeight: Number(Quickshell.env("GLANCE_HEIGHT") || 52) * env.scale
+    implicitHeight: Number(Quickshell.env("GLANCE_HEIGHT") || 39) * env.scale
     color: "black"
     GlanceRow { id: glance; anchors.fill: parent; host: env; client: glanceClient }
   }

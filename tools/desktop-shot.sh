@@ -14,6 +14,6 @@ backend=$!
 trap 'kill $backend 2>/dev/null || true; rm -rf "$work"' EXIT
 for _ in $(seq 50); do [[ -S "$work/run/omarchy-glance/backend.sock" ]] && break; sleep 0.1; done
 env -u WAYLAND_DISPLAY QT_QPA_PLATFORM=offscreen GLANCE_SOCKET="$work/run/omarchy-glance/backend.sock" \
-  GLANCE_OUT="$(realpath -m "$2")" GLANCE_WIDTH="${3:-1440}" GLANCE_HEIGHT="${4:-52}" GLANCE_SCALE="${5:-1}" \
+  GLANCE_OUT="$(realpath -m "$2")" GLANCE_WIDTH="${3:-1440}" GLANCE_HEIGHT="${4:-39}" GLANCE_SCALE="${5:-1}" \
   qs --no-color -p "$repo/desktop/shot.qml" 2>&1 | grep -E "shot:|ERROR|WARN qml|TypeError|ReferenceError" | grep -v "window masks" || true
 grep -i "not supported\|unknown widget" "$work/backend.log" || true

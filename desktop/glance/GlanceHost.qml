@@ -16,7 +16,6 @@ QtObject {
   property color fill: Qt.alpha(foreground, 0.04) // a control's face
   property color hoverFill: Qt.alpha(foreground, 0.08)
   property color pressedFill: Qt.alpha(foreground, 0.22)
-  property color border: Qt.alpha(foreground, 0.4)
 
   // Graph gradients from btop's current theme, as name_start/_mid/_end ->
   // colour (BtopTheme.qml reads it); empty: the built-in fallbacks.

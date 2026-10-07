@@ -4,8 +4,8 @@ Task T07 of [multi-output-tasks.md](multi-output-tasks.md). The desktop row is
 QML in `desktop/`: shared controls in `desktop/glance/` and the hosts that
 place them. The host is the Omarchy panel plugin, with a standalone
 development host ([desktop-hosts.md](desktop-hosts.md); chosen 2026-10-07).
-T09 replaces the placeholder widgets; T10 finishes the plugin (a first
-version is in, see [Panel plugin](#panel-plugin)).
+The widgets are T09's; T10 finishes the plugin (a first version is in, see
+[Panel plugin](#panel-plugin)).
 
 ```text
 desktop/
@@ -17,7 +17,12 @@ desktop/
     GlanceRow.qml      the row: left/center/right sections of a client's widgets
     GlanceClient.qml   protocol v1 client (docs/backend-protocol.md)
     GlanceHost.qml     the host environment
-    WidgetView.qml     placeholder control per widget (until T09)
+    WidgetView.qml     one widget: picks its control, maps mouse to press/release
+    Face.qml           a key face (fill, hover, pressed)
+    ButtonWidget.qml, CommandWidget.qml, GraphWidget.qml, AgentsWidget.qml,
+    MicWidget.qml, MediaWidget.qml, Meter.qml, Dots.qml (btop-style dots)
+    BtopTheme.qml      for hosts: btop's current theme, for graph gradients
+    util.js            graph presentation per source, colours, reset times
 ```
 
 The plugin lives in `desktop/` too, because Quickshell only resolves imports
@@ -59,6 +64,37 @@ by default `$XDG_RUNTIME_DIR/omarchy-glance/backend.sock`). One client is one
 session, so a host with a row on each of two monitors shares one client
 between them; the host sets its `shown`.
 
+## Widgets
+
+Each widget kind has its own control, drawn the way the Touch Bar draws it
+(`src/renderer.rs`) with the host's palette and font: the same behaviour, not
+the same pixels. Graphs use the same dot rows, mirrored halves (network,
+disk), per-core meters and battery level meter, with btop's current theme
+for gradients (`GlanceHost.btop`, which hosts fill from `BtopTheme`) or a
+widget's `gradient`; agents show Omarchy's provider logos
+(`GlanceHost.agentIcons`) and format reset times from the local clock each
+minute; the mic shows its waveform while another app records; media splits
+into previous, play/pause, next and title zones. Option sizes are desktop
+pixels, multiplied by `GlanceHost.scale`; the defaults are in the README's
+[Desktop row](../README.md#desktop-row).
+
+`WidgetView` maps mouse buttons to semantic input: press on mouse down
+(`client.press(key, button, zone)`, one pointer per button), release on
+mouse up or when the press is cancelled. A second button while one is held is
+ignored. The backend repeats held `repeat` buttons. Hover lightens pressable
+faces and shows a pointing-hand cursor.
+
+`GlanceRow` lays the widgets out (left from the left edge, right against the
+right edge, center in the middle but clear of both) and handles overflow:
+first media titles and commands without a `width` give way down to a
+minimum (eliding), then whole widgets are left out, center from its end, then
+left from its end, then right from its start. `dropped` counts the widgets
+left out. Hidden agents widgets take no space.
+
+`tools/desktop-shot.sh desktop.json out.png [width] [height] [scale]` renders
+the row headlessly against a private backend, to see a config or a narrow
+width without touching the desktop.
+
 ## Connection
 
 `GlanceClient` implements the client side of
@@ -76,7 +112,7 @@ between them; the host sets its `shown`.
   pointer per mouse button (`Qt.LeftButton`, …), and `activate(key, zone)`.
   Press feedback is the control's own and doesn't wait for the `ack`. A
   refused press or activation emits `requestFailed(key, code, message)` (the
-  placeholder flashes an urgent border) and forgets its pointer. Pointers
+  widget flashes an urgent border) and forgets its pointer. Pointers
   held across a config reload are dropped, since the backend ends those
   presses; a resync keeps them.
 - **Reconnection:** on EOF, a refused connection or a fatal error, it retries

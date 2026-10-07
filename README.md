@@ -353,8 +353,21 @@ a config such as this keeps everything on the row:
 ```
 
 Installing on such a machine (without `omarchy-glance on`, which sets up the
-Touch Bar) comes with T11. The widgets are still placeholders that show their
-values as text until T09.
+Touch Bar) comes with T11.
+
+The row draws each widget like the Touch Bar does (the same graphs, meters
+and keys), in the theme's colours and the bar's font, so sizes differ: option
+sizes are desktop pixels, and the defaults suit a row about 50 px high: text
+at the theme's size, icons 1.6 times that, `meterWidth` 170 (90 stacked),
+media `buttonWidth` 44 and `titleWidth` 260, mic `waveformWidth` 80. Keys and
+commands size to their content unless they set `width`. Clicking presses on
+mouse down and releases on mouse up, so a held `repeat` button repeats; any
+mouse button works. Clicks don't take keyboard focus from your window.
+
+When the widgets don't fit, media titles and commands without a `width`
+elide first; then whole widgets are left out, center first (from its end),
+then left (from its end), then right (from its start), so the widgets at the
+outer edges stay.
 
 ### Debugging
 

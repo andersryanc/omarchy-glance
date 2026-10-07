@@ -1,68 +1,97 @@
-// One widget as a plain labelled control: enough to see its live state and
-// press it. T09 replaces this with the real desktop widgets.
+// One widget: picks its control by kind, maps mouse buttons to press and
+// release (one pointer per button; the backend repeats held `repeat`
+// buttons), and reports the widths the row lays it out with.
 import QtQuick
 
-Rectangle {
-  id: view
+Item {
+  id: widgetView
 
   required property var widget // the snapshot entry: key, id, kind, options, action
   required property GlanceClient client
   required property GlanceHost host
   property var current: client.stateOf(widget.key)
-  property bool failed: false
 
   readonly property var options: widget.options ?? {}
   readonly property var action: widget.action
   readonly property bool pressable: !!action && (action.press === true || !!action.zones)
-  readonly property real pad: 8 * host.scale
+  // Hidden agents give up their space; the row skips widgets that aren't shown.
+  readonly property bool shown: widget.kind !== "agents" || current.visible !== false
+  readonly property real minWidth: control.item && control.item.minWidth !== undefined ? control.item.minWidth : implicitWidth
+  property bool fits: true // set by the row's layout
+  property string pressedZone: "" // "" none, "all" the whole widget, else a media zone
+  property bool failed: false
 
-  implicitWidth: widget.kind === "spacer" ? (options.size ?? 10) * host.scale : label.implicitWidth + 2 * pad
-  radius: 4 * host.scale
-  color: widget.kind === "spacer" ? "transparent" : area.pressed && pressable ? host.pressedFill : host.fill
-  border.width: failed ? 1 : 0
-  border.color: host.urgent
+  implicitWidth: control.item ? control.item.implicitWidth : 0
+  visible: fits && shown
 
-  function summary() {
-    const s = current
-    switch (widget.kind) {
-    case "button": return options.label ?? options.icon ?? widget.id
-    case "command": return s.text ?? "…"
-    case "graph": return (options.label ? options.label + " " : "") + (s.lines ?? []).map(l => l[0]).join(" ")
-    case "agents": return (s.limits ?? []).map(l => l.label + " " + (l.fraction === null ? "–" : Math.round(l.fraction * 100) + "%")).join("  ")
-    case "mic": return s.muted ? "mic muted" : s.inUse ? "mic live" : "mic"
-    case "media": return s.hasMedia ? (s.playing ? "▶ " : "⏸ ") + s.title : "no media"
-    default: return ""
-    }
-  }
-
-  Text {
-    id: label
-    anchors.centerIn: parent
-    text: view.summary()
-    color: view.current.urgent ? view.host.urgent : view.host.foreground
-    font.family: view.host.fontFamily
-    font.pixelSize: view.host.fontSize
-  }
+  // Option sizes are desktop pixels, times the host's scale.
+  function px(v) { return v * host.scale }
+  function opt(name, fallback) { return options[name] !== undefined && options[name] !== null ? options[name] : fallback }
 
   Connections {
-    target: view.client
-    function onWidgetChanged(key, state) { if (key === view.widget.key) view.current = state }
-    function onRequestFailed(key) { if (key === view.widget.key) { view.failed = true; failedTimer.restart() } }
+    target: widgetView.client
+    function onWidgetChanged(key, state) { if (key === widgetView.widget.key) widgetView.current = state }
+    function onRequestFailed(key) { if (key === widgetView.widget.key) { widgetView.failed = true; failedTimer.restart() } }
   }
-  Timer { id: failedTimer; interval: 600; onTriggered: view.failed = false }
+  Timer { id: failedTimer; interval: 600; onTriggered: widgetView.failed = false }
+
+  Component { id: button; ButtonWidget { view: widgetView } }
+  Component { id: command; CommandWidget { view: widgetView } }
+  Component { id: graph; GraphWidget { view: widgetView } }
+  Component { id: agents; AgentsWidget { view: widgetView } }
+  Component { id: mic; MicWidget { view: widgetView } }
+  Component { id: media; MediaWidget { view: widgetView } }
+  Component { id: spacer; Item { implicitWidth: widgetView.px(widgetView.opt("size", 40)) } }
+
+  Loader {
+    id: control
+    anchors.fill: parent
+    sourceComponent: ({ button: button, command: command, graph: graph, agents: agents, mic: mic,
+                        media: media, spacer: spacer })[widgetView.widget.kind] ?? null
+  }
+
+  // A refused press flashes the border.
+  Rectangle {
+    anchors.fill: parent
+    visible: widgetView.failed
+    color: "transparent"
+    radius: 6 * widgetView.host.scale
+    border.width: 2
+    border.color: widgetView.host.urgent
+  }
 
   MouseArea {
     id: area
     anchors.fill: parent
-    enabled: view.pressable
+    enabled: widgetView.pressable
+    hoverEnabled: true
+    cursorShape: widgetView.pressable ? Qt.PointingHandCursor : Qt.ArrowCursor
     acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
-    // Media splits into its zones; the real control (T09) draws them.
+    property int held: 0 // the button that pressed; others are ignored until it's released
+
     function zone(x) {
-      const zones = view.action.zones
-      return zones ? zones[Math.min(zones.length - 1, Math.floor(x / width * zones.length))] : undefined
+      return widgetView.action && widgetView.action.zones && control.item && control.item.zoneAt ? control.item.zoneAt(x) : ""
     }
-    onPressed: mouse => view.client.press(view.widget.key, mouse.button, zone(mouse.x))
-    onReleased: mouse => view.client.release(mouse.button)
-    onCanceled: { for (const b of [Qt.LeftButton, Qt.MiddleButton, Qt.RightButton]) view.client.release(b) }
+    onPressed: mouse => {
+      if (held) return
+      const z = zone(mouse.x)
+      if (widgetView.action.zones && !widgetView.action.zones.includes(z)) return // e.g. the title without an onTap
+      if (!widgetView.client.press(widgetView.widget.key, mouse.button, z || undefined)) return
+      held = mouse.button
+      widgetView.pressedZone = z || "all"
+    }
+    onReleased: mouse => {
+      if (mouse.button !== held) return
+      widgetView.client.release(held)
+      held = 0
+      widgetView.pressedZone = ""
+    }
+    onCanceled: {
+      if (held) widgetView.client.release(held)
+      held = 0
+      widgetView.pressedZone = ""
+    }
   }
+  readonly property bool hovered: area.containsMouse
+  readonly property real hoverX: area.mouseX
 }

@@ -22,6 +22,7 @@ Item {
 
   // One session for every screen's row.
   GlanceClient { id: glanceClient }
+  BtopTheme { id: btop }
 
   // The live theme, with desktop.json's overrides on top.
   GlanceHost {
@@ -32,10 +33,13 @@ Item {
     urgent: glanceClient.color("urgent", Color.urgent)
     muted: glanceClient.color("muted", Color.muted)
     fill: Style.normalFill
+    hoverFill: Style.hoverFill
     pressedFill: Style.pressedFill
     border: Style.normalBorderColor
+    btop: btop.colors
+    agentIcons: "file:///usr/share/omarchy/shell/plugins/agents/assets/"
     fontFamily: glanceClient.font(root.bar && root.bar.fontFamily ? root.bar.fontFamily : Style.font.family)
-    fontSize: Style.font.body
+    fontSize: Style.font.subtitle
   }
 
   // desktop.json's "monitor": the named screens, or every screen.

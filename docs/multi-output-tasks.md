@@ -217,11 +217,16 @@ works with no t1bridge installed. Dependencies: T01, T07.
 
 ### T09 — Desktop widgets
 
-- [ ] Implement every widget labelled for desktop: `exec` buttons (with
+- [x] Implement every widget labelled for desktop: `exec` buttons (with
   hold-to-repeat), commands, graphs, agents, media, mic, spacer.
-- [ ] Responsive left/center/right layout, text truncation, and defined
+- [x] Responsive left/center/right layout, text truncation, and defined
   overflow behavior at narrow widths and large scales.
-- [ ] Map mouse press/release/hold to semantic input.
+- [x] Map mouse press/release/hold to semantic input.
+
+Done 2026-10-07 ([desktop-client.md](desktop-client.md#widgets)). Checked
+headlessly with `tools/desktop-shot.sh` (every desktop widget, a narrow row)
+and against the live backend; clicking through the plugin, hold-to-repeat
+with a mouse, and hover are for the user to try.
 
 Acceptance: desktop widgets share providers with the Touch Bar when both run;
 hidden agent widgets give up their space; clicks keep focus on the active

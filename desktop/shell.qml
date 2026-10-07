@@ -25,8 +25,12 @@ ShellRoot {
     shown: env.shown
   }
 
+  BtopTheme { id: btop }
+
   GlanceHost {
     id: env
+    btop: btop.colors
+    agentIcons: "file:///usr/share/omarchy/shell/plugins/agents/assets/"
     background: glanceClient.color("background", root.themes[root.theme].background)
     foreground: glanceClient.color("foreground", root.themes[root.theme].foreground)
     accent: glanceClient.color("accent", root.themes[root.theme].accent)
@@ -41,7 +45,7 @@ ShellRoot {
     id: window
     title: "omarchy-glance development host"
     implicitWidth: 1400
-    implicitHeight: 120
+    implicitHeight: 140
     color: "#404040" // shows through a transparent row
 
     GlanceRow {
@@ -49,7 +53,7 @@ ShellRoot {
       host: env
       client: glanceClient
       anchors { left: parent.left; right: parent.right; top: parent.top }
-      height: (glanceClient.settings.height || 30) * env.scale
+      height: (glanceClient.settings.height || 52) * env.scale
       visible: env.shown
     }
 

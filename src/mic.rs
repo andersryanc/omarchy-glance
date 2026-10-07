@@ -14,13 +14,18 @@ use std::process::Child;
 
 use serde_json::Value;
 
-use crate::proc::{kill, popen, run_output};
+use crate::backend::providers::Job;
+use crate::proc::{kill, popen};
 use crate::{log, now};
 
 const RATE: usize = 8000; // level-meter sample rate (mono s16le)
 const FLOOR_DB: f64 = -50.0; // levels below this draw as silence
 const RESUBSCRIBE_SECONDS: f64 = 5.0; // retry if `pactl subscribe` dies
 const RECHECK_SECONDS: f64 = 5.0; // re-read state even without events
+// The default source, the sources and the recording streams, one per line
+// (pactl's JSON is one line); no output if any of them fails.
+const QUERY: &str = "set -e; d=$(pactl get-default-source); s=$(pactl -f json list sources); \
+                     o=$(pactl -f json list source-outputs); printf '%s\\n%s\\n%s\\n' \"$d\" \"${s:-[]}\" \"${o:-[]}\"";
 
 pub struct Mic {
     frame_bytes: usize,
@@ -29,6 +34,8 @@ pub struct Mic {
     pub levels: VecDeque<f64>, // 0-1, newest last
     sub: Option<Child>,
     rec: Option<Child>,
+    query: Job,     // reads the state without blocking the loop
+    requery: bool,  // something changed while it ran
     pcm: Vec<u8>,
     events: Vec<u8>,
     refresh_at: f64,
@@ -41,6 +48,7 @@ pub struct Mic {
 pub enum MicFd {
     Events,
     Audio,
+    State,
 }
 
 /// Bytes of 16-bit audio per level sample, for `fps` samples a second.
@@ -61,6 +69,8 @@ impl Mic {
             levels: VecDeque::with_capacity(512),
             sub: None,
             rec: None,
+            query: Job::new(QUERY, 0.0),
+            requery: false,
             pcm: vec![],
             events: vec![],
             refresh_at: 0.0,
@@ -74,6 +84,7 @@ impl Mic {
         for p in [self.sub.take(), self.rec.take()].into_iter().flatten() {
             kill(p);
         }
+        self.query.stop();
     }
 
     pub fn tick(&mut self, t: f64) {
@@ -96,7 +107,14 @@ impl Mic {
         }
         if t >= self.refresh_at {
             self.refresh_at = t + RECHECK_SECONDS;
-            self.refresh();
+            if self.query.running() {
+                self.requery = true;
+            } else {
+                self.query.next = t;
+            }
+        }
+        if let Some(out) = self.query.tick(t, "mic") {
+            self.query_done(&out);
         }
     }
 
@@ -108,7 +126,7 @@ impl Mic {
     }
 
     pub fn deadline(&self) -> f64 {
-        self.refresh_at.min(if self.sub.is_none() { self.sub_at } else { f64::INFINITY })
+        self.refresh_at.min(self.query.deadline()).min(if self.sub.is_none() { self.sub_at } else { f64::INFINITY })
     }
 
     pub fn fds(&self) -> Vec<(RawFd, MicFd)> {
@@ -119,6 +137,9 @@ impl Mic {
         if let Some(fd) = self.rec.as_ref().and_then(|p| p.stdout.as_ref()) {
             out.push((fd.as_raw_fd(), MicFd::Audio));
         }
+        if let Some(fd) = self.query.fd() {
+            out.push((fd, MicFd::State));
+        }
         out
     }
 
@@ -126,6 +147,11 @@ impl Mic {
         match which {
             MicFd::Events => self.read_events(),
             MicFd::Audio => self.read_audio(),
+            MicFd::State => {
+                if let Some(out) = self.query.readable() {
+                    self.query_done(&out);
+                }
+            }
         }
     }
 
@@ -159,30 +185,32 @@ impl Mic {
         self.events.drain(..keep);
     }
 
-    fn pactl_json(args: &[&str]) -> Result<Value, String> {
-        let mut full = vec!["pactl", "-f", "json"];
-        full.extend_from_slice(args);
-        let out = run_output(&full, 2.0)?;
-        serde_json::from_slice(if out.is_empty() { b"[]" } else { &out }).map_err(|e| e.to_string())
+    /// The query finished: use its output, and run it again if asked meanwhile.
+    fn query_done(&mut self, out: &str) {
+        match Self::parse_state(out) {
+            Ok((default, sources, outputs)) => self.apply(&default, &sources, &outputs),
+            Err(e) => log(&format!("mic: could not read PulseAudio state: {e}")),
+        }
+        if std::mem::take(&mut self.requery) {
+            self.query.next = 0.0;
+        }
     }
 
-    fn refresh(&mut self) {
-        let state = (|| -> Result<_, String> {
-            let default = String::from_utf8_lossy(&run_output(&["pactl", "get-default-source"], 2.0)?).trim().to_string();
-            Ok((default, Self::pactl_json(&["list", "sources"])?, Self::pactl_json(&["list", "source-outputs"])?))
-        })();
-        let (default, sources, outputs) = match state {
-            Ok(s) => s,
-            Err(e) => {
-                log(&format!("mic: could not read PulseAudio state: {e}"));
-                return;
-            }
+    fn parse_state(out: &str) -> Result<(String, Value, Value), String> {
+        let mut lines = out.lines();
+        let (Some(default), Some(sources), Some(outputs)) = (lines.next(), lines.next(), lines.next()) else {
+            return Err("pactl failed".into());
         };
+        let json = |s: &str| serde_json::from_str::<Value>(s).map_err(|e| e.to_string());
+        Ok((default.trim().to_string(), json(sources)?, json(outputs)?))
+    }
+
+    fn apply(&mut self, default: &str, sources: &Value, outputs: &Value) {
         let empty = vec![];
         let sources = sources.as_array().unwrap_or(&empty);
         let outputs = outputs.as_array().unwrap_or(&empty);
         let prop = |v: &Value, k: &str| v.get("properties").and_then(|p| p.get(k)).cloned();
-        let source = sources.iter().find(|s| s.get("name").and_then(Value::as_str) == Some(default.as_str()));
+        let source = sources.iter().find(|s| s.get("name").and_then(Value::as_str) == Some(default));
         let muted = source.is_none_or(|s| s.get("mute").and_then(Value::as_bool).unwrap_or(false));
         let mics: HashSet<i64> = sources
             .iter()
@@ -204,7 +232,7 @@ impl Mic {
         }
         if in_use && !muted && source.is_some() && self.wanted {
             if self.rec.is_none() {
-                self.start_levels(&default);
+                self.start_levels(default);
             }
         } else if self.rec.is_some() {
             self.stop_levels();

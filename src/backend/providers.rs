@@ -4,7 +4,7 @@
 use std::collections::VecDeque;
 use std::fs;
 use std::io::Read;
-use std::os::fd::{AsRawFd, RawFd};
+use std::os::fd::{AsRawFd, FromRawFd, OwnedFd, RawFd};
 use std::path::{Path, PathBuf};
 use std::process::Child;
 use std::time::SystemTime;
@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::config::{Spec, num, text};
 use crate::log;
-use crate::proc::{kill, kill_group, popen, reap, shell};
+use crate::proc::{kill, popen, shell};
 use crate::sources::{self, Source};
 
 pub const COMMAND_TIMEOUT: f64 = 10.0; // kill a command widget's script after this long
@@ -72,13 +72,14 @@ pub struct Job {
     interval: f64,
     pub next: f64,
     proc: Option<Child>,
+    exit: Option<OwnedFd>, // a pidfd, once the script closed its output but runs on
     out: Vec<u8>,
     started: f64,
 }
 
 impl Job {
     pub fn new(cmd: &str, interval: f64) -> Job {
-        Job { cmd: cmd.into(), interval, next: 0.0, proc: None, out: vec![], started: 0.0 }
+        Job { cmd: cmd.into(), interval, next: 0.0, proc: None, exit: None, out: vec![], started: 0.0 }
     }
 
     pub fn running(&self) -> bool {
@@ -105,10 +106,9 @@ impl Job {
     pub fn tick(&mut self, t: f64, what: &str) -> Option<String> {
         if self.proc.is_some() && t - self.started > COMMAND_TIMEOUT {
             log(&format!("{what}: command timed out"));
-            if let Some(p) = self.proc.as_ref() {
-                kill_group(p);
-            }
-            return Some(self.finish());
+            let delivered = self.exit.take().is_some();
+            kill(self.proc.take().unwrap());
+            return (!delivered).then(|| String::from_utf8_lossy(&self.out).trim().to_string());
         }
         if self.proc.is_none() && t >= self.next {
             match shell(&self.cmd, true) {
@@ -129,11 +129,21 @@ impl Job {
     }
 
     pub fn fd(&self) -> Option<RawFd> {
+        if let Some(exit) = &self.exit {
+            return Some(exit.as_raw_fd());
+        }
         self.proc.as_ref().and_then(|p| p.stdout.as_ref()).map(AsRawFd::as_raw_fd)
     }
 
-    /// Read what's available; the trimmed output once the script is done.
+    /// Read what's available; the trimmed output once the script closes it.
     pub fn readable(&mut self) -> Option<String> {
+        if self.exit.take().is_some() {
+            // The pidfd is readable: the script has exited, so this doesn't wait.
+            if let Some(mut p) = self.proc.take() {
+                let _ = p.wait();
+            }
+            return None;
+        }
         let mut buf = vec![0u8; 65536];
         let n = self.proc.as_mut().and_then(|p| p.stdout.as_mut()).map_or(Ok(0), |s| s.read(&mut buf)).unwrap_or(0);
         if n > 0 && self.out.len() < 65536 {
@@ -143,15 +153,27 @@ impl Job {
         Some(self.finish())
     }
 
+    /// The output is complete. A script still running after closing it is
+    /// watched through a pidfd and counts as running until it exits or times
+    /// out, so no run overlaps it and the loop never waits for it.
     fn finish(&mut self) -> String {
         if let Some(mut p) = self.proc.take() {
             drop(p.stdout.take());
-            reap(p, 1.0);
+            if matches!(p.try_wait(), Ok(None)) {
+                let fd = unsafe { libc::syscall(libc::SYS_pidfd_open, p.id(), 0) };
+                if fd >= 0 {
+                    self.exit = Some(unsafe { OwnedFd::from_raw_fd(fd as RawFd) });
+                    self.proc = Some(p);
+                } else {
+                    kill(p);
+                }
+            }
         }
         String::from_utf8_lossy(&self.out).trim().to_string()
     }
 
     pub fn stop(&mut self) {
+        self.exit = None;
         if let Some(p) = self.proc.take() {
             kill(p);
         }

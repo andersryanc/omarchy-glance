@@ -204,6 +204,29 @@ fn stopping_a_command_ends_its_children() {
     assert!(!alive(pid), "the timed-out command's child lives on");
 }
 
+/// Wait for a job's fd and handle it, as the loop would.
+fn job_readable(job: &mut providers::Job) -> Option<String> {
+    let mut pfd = libc::pollfd { fd: job.fd().expect("an fd to wait on"), events: libc::POLLIN, revents: 0 };
+    assert_eq!(unsafe { libc::poll(&mut pfd, 1, 2000) }, 1, "nothing to read");
+    job.readable()
+}
+
+#[test]
+fn command_that_closes_its_output_early_does_not_block() {
+    let mut job = providers::Job::new("echo hi; exec 1>&-; sleep 0.3", 0.0);
+    job.tick(now(), "test");
+    let start = Instant::now();
+    let mut out = None;
+    while out.is_none() {
+        out = job_readable(&mut job);
+    }
+    assert_eq!(out.as_deref(), Some("hi"));
+    assert!(start.elapsed() < Duration::from_millis(150), "waited for the script: {:?}", start.elapsed());
+    assert!(job.running(), "it runs on, so no second run starts");
+    assert_eq!(job_readable(&mut job), None); // its exit
+    assert!(!job.running() && job.fd().is_none());
+}
+
 #[test]
 fn malformed_requests() {
     let dir = Dir::new("malformed");

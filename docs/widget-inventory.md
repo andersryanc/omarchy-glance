@@ -205,7 +205,8 @@ hardware-specific parts are bar-wide (see [Bar behaviour](#bar-behaviour)).
 
 Questions 1–4 are settled in [backend-protocol.md](backend-protocol.md) as
 proposed (approved 2026-10-06). Question 5 is settled: the project targets
-Omarchy only. Question 8 is noted in `TODO.md` under Bugs.
+Omarchy only. Question 7 is settled: graphs use btop's gradients on both
+outputs. Question 8 is noted in `TODO.md` under Bugs.
 
 1. **Shared providers.** Two widgets with the same `id` currently get separate
    sources (two cpu graphs sample `/proc/stat` twice). Proposal: the backend
@@ -240,8 +241,9 @@ Omarchy only. Question 8 is noted in `TODO.md` under Bugs.
    changes. For the desktop row, either keep btop's three-stop gradients (the
    graphs look like btop and like the Touch Bar) or derive graph colours from
    the shell palette (they match the rest of the bar but lose the per-series
-   gradients). Proposal: btop's gradients for graphs, the shell palette for
-   everything else; `gradient` overrides either way. Decide by T09.
+   gradients). Decided 2026-10-06: graphs keep reading btop's gradients on
+   both outputs and follow theme changes live, as btop itself does; the shell
+   palette covers everything else; `gradient` overrides either way.
 8. **Narrow `meterWidth` in the row agents layout** makes labels, reset times
    and percentages overlap (seen while building the golden config). It's a
    presentation bug, separate from the split.

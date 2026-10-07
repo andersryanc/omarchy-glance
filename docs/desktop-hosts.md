@@ -33,7 +33,7 @@ monitors`, plus screenshots.
 | Clicks keep focus on the active window | Not tested (no way to click remotely); both set `keyboardFocus: None`, which Hyprland honours for layer surfaces | Same |
 | Fractional scaling | Not tested (changing the scale of the streamed display would disrupt the session) | Not tested |
 | Monitor hotplug | Not tested; both create one window per `Quickshell.screens` entry through `Variants` | Not tested |
-| Autostart and install | Ours to provide (a user service or Hyprland autostart) | The shell mounts it at startup once enabled; installs with `omarchy plugin add`; reloads on file save while developing |
+| Autostart and install | Ours to provide (a user service or Hyprland autostart) | The shell mounts it at startup once enabled; installs with `omarchy plugin add`. It reloads plugins on file save, but keeps a keepLoaded panel's first compiled version: edits need `omarchy-restart-shell` (found with the real row) |
 | Isolation | Own process: a bug in the row can't stall the bar, notifications or the lock screen | Runs unsandboxed in `omarchy-shell`: a hang or heavy work in the row stalls the whole desktop shell, including the lock screen |
 | API stability | Only Quickshell and Hyprland | The third-party plugin facade, `keepLoaded` panels and `qs.Commons`, all new in Omarchy 4 |
 
@@ -64,7 +64,7 @@ can't stall the shell. Transparency isn't in the facade; read
 
 Changing the display scale recreates the bar's windows, and the plugin's row
 then sat above the bar, like the standalone row after a shell restart. The
-plugin now uses the same remap on `openlayer>>omarchy-bar`, so the
+plugin now uses the same remap (verified at scale 1.6 and back to 2) on `openlayer>>omarchy-bar`, so the
 restart-proof stacking above isn't a difference between the hosts after all.
 Clicks keep focus on the active window, and the row scales with the display
 (checked by the user).

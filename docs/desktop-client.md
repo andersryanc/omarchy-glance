@@ -113,7 +113,9 @@ omarchy-shell shell rescanPlugins
 omarchy-shell shell setPluginEnabled glance.row true   # false to remove it
 ```
 
-The shell reloads it when its files change. Still for T10: monitor selection
+The shell notices changed files and reloads its plugins, but a running
+shell keeps the plugin's first compiled version, so edits only take effect
+after `omarchy-restart-shell`. Still for T10: monitor selection
 and height from `desktop.json`, transparency, following the bar when it hides
 or moves, and monitor hotplug ([desktop-hosts.md](desktop-hosts.md)).
 

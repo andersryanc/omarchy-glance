@@ -59,6 +59,7 @@ omarchy-glance status        # which renderer is selected, and both services
 omarchy-glance log           # follow the client's and the backend's logs
 omarchy-glance config        # create ~/.config/omarchy-glance/touchbar.json if missing, print its path
 omarchy-glance config edit   # ... and open it in $EDITOR
+omarchy-glance config desktop [edit]   # the same for the desktop row's desktop.json
 ```
 
 `on` installs `omarchy-glance.socket` and `omarchy-glance.service` into
@@ -98,7 +99,7 @@ and the Omarchy panel plugin that hosts it are not yet implemented.
 | `systemd/` | User units for the backend, compiled into the binary for `on`. |
 | `src/` | `main.rs` (entry and modes), `cli.rs` (control subcommands), `proto.rs` (t1bridge IPC, memfd buffers), `config.rs`, `renderer.rs` (the Touch Bar client: backend link, layout, drawing, input, event loop, `preview`) with `renderer/golden.rs` (golden-preview tests) and `renderer/tests.rs`, `sources.rs` (graph data), `mic.rs`, `proc.rs` (child processes). |
 | `desktop/` | The desktop client (QML): shared controls in `glance/`, the development host `shell.qml` (`qs -p desktop`), and `check.qml` for `tools/desktop-check.sh`. |
-| `touchbar.default.json` | The default Touch Bar config, compiled into the binary. |
+| `touchbar.default.json`, `desktop.default.json` | The default Touch Bar and desktop row configs, compiled into the binary. |
 | `docs/` | t1bridge's IPC spec and README, the nohzafk T1 notes, the T1's USB descriptors. |
 | `tests/golden/` | Golden-preview images, the config that uses every widget kind, and the fixed data they're drawn with. |
 | `tools/` | Hardware experiments, e.g. `cutoff_test.py` (the 2060 px limit), `perf.sh` (memory and CPU of the running bar), `desktop-check.sh` (headless check of the desktop client), and `spikes/desktop-host/` (the T06 desktop host spikes). |
@@ -294,6 +295,66 @@ a single key.
 | `font` | `JetBrainsMono Nerd Font` | Labels and icons. |
 | `repeatDelay`, `repeatInterval` | `0.4`, `0.12` | Seconds before a held button repeats, and between repeats. |
 | `idleDimSeconds` | `0` | Dim to 25% after this long without a touch (`0` = never). |
+
+## Desktop row
+
+The desktop row is a row of widgets under the Omarchy bar, mainly for
+machines without a Touch Bar ([desktop-client.md](docs/desktop-client.md)).
+It has its own file, `~/.config/omarchy-glance/desktop.json`, or
+`desktop.default.json` in this directory when that doesn't exist; create a
+copy with `omarchy-glance config desktop`. Like `touchbar.json` it replaces
+the default entirely and reloads within a second of being saved. An invalid
+`desktop.json` only affects the row (the backend logs why and keeps its
+previous config, or the default); the Touch Bar keeps running its own.
+
+```json
+{
+  "version": 1,
+  "left":   [{ "id": "glance.media" }],
+  "center": [],
+  "right":  [{ "id": "glance.cpu" }, { "id": "glance.memory" }, { "id": "glance.agents", "agent": "claude" }]
+}
+```
+
+The widgets are the [Touch Bar's](#widgets) marked D, with the same options;
+sizes such as a spacer's `size` are desktop pixels. There are no layers and no
+Fn layer: `left`, `center` and `right` sit at the top level. `glance.esc` and
+`key` buttons are Touch Bar only: the backend logs them and the row leaves
+them out.
+
+| Key | Default | |
+|---|---|---|
+| `monitor` | every monitor | A monitor name (`"eDP-1"`, as in `hyprctl monitors`) or a list of names. |
+| `height` | twice the bar's height | Row height in pixels (10 to 200). |
+| `colors.background`, `foreground`, `accent`, `urgent`, `muted` | the Omarchy theme | `#rrggbb` overrides of the live theme. |
+| `font` | the bar's font | Font family. |
+| `repeatDelay`, `repeatInterval` | `0.4`, `0.12` | As for the Touch Bar. |
+
+A desktop-only setup needs no t1bridge: the backend doesn't use it, and the
+row starts the backend through its socket. On a machine without a Touch Bar,
+a config such as this keeps everything on the row:
+
+```json
+{
+  "version": 1,
+  "left": [
+    { "id": "glance.media" },
+    { "id": "screenshot", "type": "button", "label": "shot", "exec": "omarchy-capture-screenshot" }
+  ],
+  "center": [{ "id": "uptime", "type": "command", "exec": "uptime -p", "interval": 60 }],
+  "right": [
+    { "id": "glance.cpu", "temperature": true },
+    { "id": "glance.memory" },
+    { "id": "glance.network" },
+    { "id": "glance.mic" },
+    { "id": "glance.agents", "agent": "claude" }
+  ]
+}
+```
+
+Installing on such a machine (without `omarchy-glance on`, which sets up the
+Touch Bar) comes with T11. The widgets are still placeholders that show their
+values as text until T09.
 
 ### Debugging
 

@@ -15,19 +15,16 @@ qs_pid=""
 cleanup() { kill $backend_pid $qs_pid 2>/dev/null || true; }
 trap cleanup EXIT
 
-cat >"$work/config/omarchy-glance/touchbar.json" <<EOF
+cat >"$work/config/omarchy-glance/desktop.json" <<EOF
 {
   "version": 1,
-  "layers": {
-    "default": {
-      "left": [
-        { "id": "touch", "type": "button", "label": "press", "exec": "touch '$work/pressed'" },
-        { "id": "glance.spacer", "size": 20 },
-        { "id": "hello", "type": "command", "exec": "echo hello", "interval": 1 }
-      ],
-      "right": [{ "id": "glance.cpu" }]
-    }
-  }
+  "left": [
+    { "id": "glance.esc" },
+    { "id": "touch", "type": "button", "label": "press", "exec": "touch '$work/pressed'" },
+    { "id": "glance.spacer", "size": 20 },
+    { "id": "hello", "type": "command", "exec": "echo hello", "interval": 1 }
+  ],
+  "right": [{ "id": "glance.cpu" }]
 }
 EOF
 
@@ -54,7 +51,7 @@ env -u WAYLAND_DISPLAY QT_QPA_PLATFORM=offscreen GLANCE_SOCKET="$work/run/omarch
 qs_pid=$!
 
 wait_for 1 "check: status ready"
-wait_for 1 "check: text default.left.2 hello"
+wait_for 1 "check: text default.left.3 hello"
 wait_for 1 "check: failed default.left.99 unknown_widget"
 wait_for 1 "check: view toggled"
 sleep 0.3
@@ -65,6 +62,7 @@ start_backend
 wait_for 2 "check: status ready"
 sleep 0.5 # the last screenshot
 
+grep -q "default.left.0=esc(unsupported)" "$work/qs.log" || fail "Esc should be unsupported on the desktop"
 grep -q "forcing a gap" "$work/qs.log" || fail "no forced gap"
 (( $(grep -c "check: snapshot rev" "$work/qs.log") >= 3 )) || fail "the gap didn't resync (expected snapshots: first, resync, after restart)"
 [[ -e "$work/pressed" ]] || fail "the press didn't run the button's action"

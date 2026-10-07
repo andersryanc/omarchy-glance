@@ -490,7 +490,16 @@ impl Backend {
         let rev = s.rev;
         let oc = &self.outputs[&s.output.unwrap()];
         let c = &oc.config;
-        let settings = json!({
+        let d = &c.desktop;
+        let settings = if s.output == Some(Output::Desktop) { json!({
+            "colors": d.colors,
+            "font": d.font,
+            "monitors": d.monitors,
+            "height": d.height,
+            "repeatDelay": c.repeat_delay,
+            "repeatInterval": c.repeat_interval,
+            "hasFn": false,
+        }) } else { json!({
             "colors": {"background": hex(c.background), "key": hex(c.key), "keyPressed": hex(c.key_pressed),
                        "text": hex(c.text), "urgent": hex(c.urgent), "debugBackground": hex(c.debug_bg),
                        "debugBackgroundFn": hex(c.debug_bg_fn)},
@@ -500,7 +509,7 @@ impl Backend {
             "repeatInterval": c.repeat_interval,
             "debug": {"background": c.debug_background, "border": c.border, "testPattern": c.test_pattern},
             "hasFn": c.has_fn,
-        });
+        }) };
         let widgets: Vec<Value> = oc.widgets.iter().map(|w| {
             let mut v = json!({
                 "key": w.key, "id": w.id, "kind": w.kind.name(), "layer": w.layer_name(), "section": w.section,
@@ -553,7 +562,7 @@ impl Backend {
         }
         let label = if user { path.display().to_string() } else { format!("<built-in {default_name}>") };
         let text = if user { fs::read_to_string(&path).map_err(|e| e.to_string()) } else { Ok(default.to_string()) };
-        let parsed = text.and_then(|s| Config::parse(&s));
+        let parsed = text.and_then(|s| output.parse_config(&s));
         let (config, error, label) = match parsed {
             Ok(c) => (c, None, label),
             Err(e) => {
@@ -563,7 +572,7 @@ impl Backend {
                     p.error = Some(e);
                     return;
                 }
-                (Config::parse(default).expect("built-in config"), Some(e), format!("<built-in {default_name}>"))
+                (output.parse_config(default).expect("built-in config"), Some(e), format!("<built-in {default_name}>"))
             }
         };
         log(&format!("loaded {label} for {}", output.name()));
@@ -590,14 +599,17 @@ impl Backend {
             let lname = if *layer == Layer::Fn { "fn" } else { "default" };
             for (i, spec) in items.iter().enumerate() {
                 let id = text(spec, "id", "");
+                let at = match output {
+                    Output::Touchbar => format!("{}: layers.{lname}.{section}[{i}]", output.file_name()),
+                    Output::Desktop => format!("{}: {section}[{i}]", output.file_name()),
+                };
                 let Some(kind) = protocol::kind_of(spec) else {
-                    log(&format!("{}: layers.{lname}.{section}[{i}]: unknown widget {id:?}", output.file_name()));
+                    log(&format!("{at}: unknown widget {id:?}"));
                     continue;
                 };
                 let unsupported = output.unsupported(kind, spec);
                 if let Some(reason) = unsupported {
-                    log(&format!("{}: layers.{lname}.{section}[{i}]: {id} is not supported on {} ({reason})",
-                                 output.file_name(), output.name()));
+                    log(&format!("{at}: {id} is not supported on {} ({reason})", output.name()));
                 }
                 let provider = if unsupported.is_some() { None } else { Self::provider_key(kind, spec) };
                 out.push(WidgetDef { key: format!("{lname}.{section}.{i}"), id, kind, layer: *layer, section,

@@ -197,12 +197,20 @@ state and shows a coherent disconnected state. Dependencies: T05, T06.
 
 ### T08 — Desktop configuration
 
-- [ ] Add `~/.config/omarchy-glance/desktop.json` and its built-in default:
+- [x] Add `~/.config/omarchy-glance/desktop.json` and its built-in default:
   one widget list (left/center/right), presentation settings, monitor and
   height; colors and font from the host theme unless overridden.
-- [ ] Validate against output labels; log unsupported widgets.
-- [ ] Document it with examples, including a desktop-only config for machines
+- [x] Validate against output labels; log unsupported widgets.
+- [x] Document it with examples, including a desktop-only config for machines
   without a Touch Bar.
+
+Done 2026-10-07: `desktop.default.json`, `Config::parse_desktop`, the
+`desktop` output in the backend, `omarchy-glance config desktop`, and the
+README's [Desktop row](../README.md#desktop-row) section. The default row is
+twice the bar's height (the user's call). The plugin already applies
+`monitor` and `height`. Not run on a machine without t1bridge; the backend
+has no t1bridge code, and `tools/desktop-check.sh` runs a backend with only
+a desktop session.
 
 Acceptance: an invalid `desktop.json` never affects the Touch Bar; a desktop-only config
 works with no t1bridge installed. Dependencies: T01, T07.

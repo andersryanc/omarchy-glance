@@ -20,18 +20,28 @@ Item {
   function open(payloadJson) {}
   function close() {}
 
+  // One session for every screen's row.
+  GlanceClient { id: glanceClient }
+
+  // The live theme, with desktop.json's overrides on top.
   GlanceHost {
     id: env
-    background: Color.bar.background
-    foreground: Color.bar.text
-    accent: Color.accent
-    urgent: Color.urgent
-    muted: Color.muted
+    background: glanceClient.color("background", Color.bar.background)
+    foreground: glanceClient.color("foreground", Color.bar.text)
+    accent: glanceClient.color("accent", Color.accent)
+    urgent: glanceClient.color("urgent", Color.urgent)
+    muted: glanceClient.color("muted", Color.muted)
     fill: Style.normalFill
     pressedFill: Style.pressedFill
     border: Style.normalBorderColor
-    fontFamily: root.bar && root.bar.fontFamily ? root.bar.fontFamily : Style.font.family
+    fontFamily: glanceClient.font(root.bar && root.bar.fontFamily ? root.bar.fontFamily : Style.font.family)
     fontSize: Style.font.body
+  }
+
+  // desktop.json's "monitor": the named screens, or every screen.
+  readonly property var screens: {
+    const names = glanceClient.settings.monitors ?? []
+    return names.length === 0 ? Quickshell.screens : Quickshell.screens.filter(s => names.includes(s.name))
   }
 
   // Hyprland stacks exclusive zones in map order, so the row must map after
@@ -62,7 +72,7 @@ Item {
   Timer { id: fallback; interval: 2000; onTriggered: root.mapped = true } // the bar didn't come back
 
   Variants {
-    model: Quickshell.screens
+    model: root.screens
 
     PanelWindow {
       required property var modelData
@@ -71,7 +81,7 @@ Item {
       // The first release is a top row only; it stays at the top when the
       // bar moves to another edge or hides.
       anchors { top: true; left: true; right: true }
-      implicitHeight: Style.bar.sizeHorizontal
+      implicitHeight: glanceClient.settings.height || 2 * Style.bar.sizeHorizontal // twice the bar, unless desktop.json says
       exclusionMode: ExclusionMode.Auto
       WlrLayershell.namespace: "omarchy-glance"
       WlrLayershell.layer: WlrLayer.Top
@@ -85,7 +95,7 @@ Item {
         id: row
         anchors.fill: parent
         host: env
-        output: "touchbar" // until the backend serves desktop.json (T08)
+        client: glanceClient
       }
     }
   }

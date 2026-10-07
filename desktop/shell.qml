@@ -1,8 +1,8 @@
 // Development host: the shared glance row in a plain floating window, with
 // controls for the host environment, so controls can be worked on without
 // Omarchy's shell. Run: qs -p desktop
-// GLANCE_OUTPUT picks the output (default touchbar until desktop.json exists,
-// T08); GLANCE_SOCKET overrides the backend socket.
+// GLANCE_OUTPUT picks the output (default desktop; touchbar shows that
+// config); GLANCE_SOCKET overrides the backend socket.
 import Quickshell
 import QtQuick
 import "glance"
@@ -18,13 +18,21 @@ ShellRoot {
   property int theme: 0
   property int scaleIndex: 0
 
+  GlanceClient {
+    id: glanceClient
+    output: Quickshell.env("GLANCE_OUTPUT") || "desktop"
+    path: Quickshell.env("GLANCE_SOCKET") || defaultPath
+    shown: env.shown
+  }
+
   GlanceHost {
     id: env
-    background: root.themes[root.theme].background
-    foreground: root.themes[root.theme].foreground
-    accent: root.themes[root.theme].accent
-    urgent: root.themes[root.theme].urgent
-    muted: root.themes[root.theme].muted
+    background: glanceClient.color("background", root.themes[root.theme].background)
+    foreground: glanceClient.color("foreground", root.themes[root.theme].foreground)
+    accent: glanceClient.color("accent", root.themes[root.theme].accent)
+    urgent: glanceClient.color("urgent", root.themes[root.theme].urgent)
+    muted: glanceClient.color("muted", root.themes[root.theme].muted)
+    fontFamily: glanceClient.font("JetBrainsMono Nerd Font")
     fontSize: 13 * scale
     scale: root.scales[root.scaleIndex]
   }
@@ -39,10 +47,9 @@ ShellRoot {
     GlanceRow {
       id: glance
       host: env
-      output: Quickshell.env("GLANCE_OUTPUT") || "touchbar"
-      path: Quickshell.env("GLANCE_SOCKET") || glance.client.defaultPath
+      client: glanceClient
       anchors { left: parent.left; right: parent.right; top: parent.top }
-      height: 30 * env.scale
+      height: (glanceClient.settings.height || 30) * env.scale
       visible: env.shown
     }
 
@@ -71,9 +78,9 @@ ShellRoot {
       Text {
         color: "white"
         font.family: "monospace"
-        text: glance.output + " · " + glance.client.status + " · session " + glance.client.session + " · generation "
-              + glance.client.generation + " · " + glance.client.widgets.length + " widgets"
-              + (glance.client.configError ? " · config error: " + glance.client.configError : "")
+        text: glanceClient.output + " · " + glanceClient.status + " · session " + glanceClient.session + " · generation "
+              + glanceClient.generation + " · " + glanceClient.widgets.length + " widgets"
+              + (glanceClient.configError ? " · config error: " + glanceClient.configError : "")
       }
     }
   }

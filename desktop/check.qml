@@ -10,11 +10,16 @@ ShellRoot {
   id: root
   property int shots: 0
   property bool exercised: false
-  readonly property var client: glance.client
 
   function log(...args) { console.log("check:", ...args) }
 
   GlanceHost { id: env }
+  GlanceClient {
+    id: glanceClient
+    output: Quickshell.env("GLANCE_OUTPUT") || "desktop"
+    path: Quickshell.env("GLANCE_SOCKET")
+    shown: env.shown
+  }
 
   FloatingWindow {
     implicitWidth: 1200
@@ -25,22 +30,21 @@ ShellRoot {
       id: glance
       anchors.fill: parent
       host: env
-      output: Quickshell.env("GLANCE_OUTPUT") || "touchbar"
-      path: Quickshell.env("GLANCE_SOCKET")
+      client: glanceClient
     }
   }
 
   Connections {
-    target: root.client
+    target: glanceClient
     function onStatusChanged() {
-      root.log("status", root.client.status, "session", root.client.session, "widgets", root.client.widgets.length)
+      root.log("status", glanceClient.status, "session", glanceClient.session, "widgets", glanceClient.widgets.length)
       shot.restart()
-      if (!root.exercised && root.client.status === "ready") { root.exercised = true; exercise.start() }
+      if (!root.exercised && glanceClient.status === "ready") { root.exercised = true; exercise.start() }
     }
     function onWidgetsChanged() {
-      if (root.client.widgets.length === 0) return
-      root.log("snapshot rev", root.client.rev, "generation", root.client.generation,
-               root.client.widgets.map(w => w.key + "=" + w.kind).join(" "))
+      if (glanceClient.widgets.length === 0) return
+      root.log("snapshot rev", glanceClient.rev, "generation", glanceClient.generation,
+               glanceClient.widgets.map(w => w.key + "=" + w.kind + (w.supported ? "" : "(unsupported)")).join(" "))
     }
     function onWidgetChanged(key, state) { if (state.text !== undefined) root.log("text", key, state.text) }
     function onRequestFailed(key, code) { root.log("failed", key, code) }
@@ -51,15 +55,15 @@ ShellRoot {
   SequentialAnimation {
     id: exercise
     PauseAnimation { duration: 300 }
-    ScriptAction { script: { root.log("forcing a gap"); root.client.rev -= 1 } }
+    ScriptAction { script: { root.log("forcing a gap"); glanceClient.rev -= 1 } }
     PauseAnimation { duration: 1500 }
     ScriptAction {
       script: {
-        const button = root.client.widgets.find(w => w.kind === "button" && w.action && w.action.press)
-        root.log("press", button.key, root.client.press(button.key, Qt.LeftButton))
-        root.client.release(Qt.LeftButton)
-        root.client.press("default.left.99", Qt.RightButton) // no such widget: the backend refuses it
-        root.client.release(Qt.RightButton)
+        const button = glanceClient.widgets.find(w => w.kind === "button" && w.action && w.action.press)
+        root.log("press", button.key, glanceClient.press(button.key, Qt.LeftButton))
+        glanceClient.release(Qt.LeftButton)
+        glanceClient.press("default.left.99", Qt.RightButton) // no such widget: the backend refuses it
+        glanceClient.release(Qt.RightButton)
         env.shown = false // a hidden row tells the backend through view
       }
     }
@@ -71,7 +75,7 @@ ShellRoot {
     id: shot
     interval: 400
     onTriggered: {
-      const name = Quickshell.env("GLANCE_SHOTS") + "/" + (++root.shots) + "-" + root.client.status + ".png"
+      const name = Quickshell.env("GLANCE_SHOTS") + "/" + (++root.shots) + "-" + glanceClient.status + ".png"
       glance.grabToImage(r => root.log("shot", name, r.saveToFile(name)))
     }
   }

@@ -14,7 +14,7 @@ desktop/
   shell.qml            development host: qs -p desktop
   check.qml            headless check, run by tools/desktop-check.sh
   glance/
-    GlanceRow.qml      the row: one connection, left/center/right sections
+    GlanceRow.qml      the row: left/center/right sections of a client's widgets
     GlanceClient.qml   protocol v1 client (docs/backend-protocol.md)
     GlanceHost.qml     the host environment
     WidgetView.qml     placeholder control per widget (until T09)
@@ -25,15 +25,16 @@ inside the config folder, and the plugin directory is what Omarchy installs.
 
 ## Host contract
 
-A host creates a `GlanceHost`, gives a `GlanceRow` that environment and an
-item to fill, and owns everything about the window. The shared controls never
+A host creates one `GlanceClient` and a `GlanceHost`, gives each `GlanceRow`
+both and an item to fill, and owns everything about the window. The shared controls never
 create a window, read theme or shell files, or talk to the compositor.
 
 ```qml
-GlanceHost { id: env; background: Color.background; foreground: Color.foreground /* … */ }
+GlanceClient { id: glanceClient }   // output "desktop"
+GlanceHost { id: env; background: glanceClient.color("background", Color.bar.background) /* … */ }
 PanelWindow {
-  implicitHeight: 30
-  GlanceRow { anchors.fill: parent; host: env }
+  implicitHeight: glanceClient.settings.height || 2 * Style.bar.sizeHorizontal
+  GlanceRow { anchors.fill: parent; host: env; client: glanceClient }
 }
 ```
 
@@ -47,13 +48,16 @@ PanelWindow {
 | `shown` | Whether the row is shown. A hidden row keeps its connection and sends `view` with `shown: false`, so the backend stops providers only it needs | The host's own visibility (e.g. fullscreen) |
 
 Size isn't a property: controls lay out within the `GlanceRow` item's width
-and height, which the host sets. Unless a host overrides them, colours and
-font come from the host theme; `desktop.json` overrides arrive with T08.
+and height, which the host sets. Colours and font come from the host theme
+unless `desktop.json` overrides them: hosts fill `GlanceHost` through
+`client.color(name, themeValue)` and `client.font(themeValue)`. The client's
+`settings.monitors` and `settings.height` say where the host puts rows and
+how tall.
 
-`GlanceRow` also takes `output` (`"desktop"`) and `path` (the backend socket,
-by default `$XDG_RUNTIME_DIR/omarchy-glance/backend.sock`), and exposes its
-`client`. Each row is one session; a host with a row on each of two monitors
-has two sessions, which share providers in the backend.
+`GlanceClient` takes `output` (`"desktop"`) and `path` (the backend socket,
+by default `$XDG_RUNTIME_DIR/omarchy-glance/backend.sock`). One client is one
+session, so a host with a row on each of two monitors shares one client
+between them; the host sets its `shown`.
 
 ## Connection
 
@@ -84,7 +88,7 @@ has two sessions, which share providers in the backend.
   backend (or of starting), `status` becomes `offline`: widgets are cleared
   and the row shows "omarchy-glance: backend unavailable, reconnecting…",
   the Touch Bar's wording, or the fatal error (for example
-  `unsupported_output` while the backend has no `desktop.json` support). A
+  `unsupported_output` from a backend too old for the desktop output). A
   quick restart therefore doesn't flash it. The next snapshot brings back a
   new session with full state; graph history restarts empty, as on the Touch
   Bar.
@@ -109,8 +113,9 @@ the bar doesn't come back), fading its content in over 150 ms. Polling
 `hyprctl layers` during a scale change shows the row at the top for one or
 two polls (about 20–40 ms) before it hides, which can't be avoided because
 nothing announces the bar's close in advance. It fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
-bar's font. Until T08 it shows the Touch Bar config. Install from the
-checkout:
+bar's font, under `desktop.json`'s overrides. It shows a row on the
+monitors `desktop.json` names (every monitor by default), as tall as its
+`height` or twice the bar. Install from the checkout:
 
 ```sh
 ln -sfn ~/Work/omarchy-glance/desktop ~/.config/omarchy/plugins/glance.row
@@ -120,14 +125,14 @@ omarchy-shell shell setPluginEnabled glance.row true   # false to remove it
 
 The shell notices changed files and reloads its plugins, but a running
 shell keeps the plugin's first compiled version, so edits only take effect
-after `omarchy-restart-shell`. Still for T10: monitor selection
-and height from `desktop.json`, transparency, following the bar when it hides
-or moves, and monitor hotplug ([desktop-hosts.md](desktop-hosts.md)).
+after `omarchy-restart-shell`. Still for T10: transparency, following the
+bar when it hides or moves, and monitor hotplug
+([desktop-hosts.md](desktop-hosts.md)).
 
 ## Development host
 
 ```sh
-qs -p desktop                          # the user's backend, touchbar output
+qs -p desktop                          # the user's backend, desktop output
 GLANCE_SOCKET=/path/to/backend.sock qs -p desktop
 ```
 
@@ -135,15 +140,14 @@ A plain floating window with the row at the top and buttons that change the
 environment at runtime: theme (dark or light), scale (1, 1.25, 1.5, 2),
 transparency and shown. A status line shows the output, connection status,
 session, config generation, widget count and any config error. It needs
-Quickshell, not Omarchy's shell. Until T08 serves the `desktop` output it
-shows the Touch Bar config (`GLANCE_OUTPUT` picks the output); presses run
-those actions for real.
+Quickshell, not Omarchy's shell. `GLANCE_OUTPUT=touchbar` shows the Touch
+Bar config instead; presses run the configured actions for real.
 
 ## Check
 
 `tools/desktop-check.sh` (after `cargo build --release`) runs `check.qml`
-offscreen against a private backend with a small config, and checks: the
-first snapshot and live command updates; a forced `rev` gap resyncs; a press
+offscreen against a private backend with a small `desktop.json`, and
+checks: Esc is unsupported on the desktop; the first snapshot and live command updates; a forced `rev` gap resyncs; a press
 runs a button's `exec`; a press on an unknown widget is refused; stopping the
 backend shows the disconnected state; restarting it brings back a new
 session. It prints the `check:` log and where it saved a screenshot of each

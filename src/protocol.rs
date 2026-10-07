@@ -3,7 +3,7 @@
 
 use serde_json::Value;
 
-use crate::config::Spec;
+use crate::config::{Config, Spec};
 use crate::sources;
 
 pub const PROTOCOL: i64 = 1;
@@ -32,38 +32,53 @@ pub mod error {
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum Output {
     Touchbar,
+    Desktop,
 }
 
 impl Output {
     pub fn parse(name: &str) -> Option<Output> {
         match name {
             "touchbar" => Some(Output::Touchbar),
-            _ => None, // "desktop" arrives with its config (T08)
+            "desktop" => Some(Output::Desktop),
+            _ => None,
         }
     }
 
     pub fn name(self) -> &'static str {
         match self {
             Output::Touchbar => "touchbar",
+            Output::Desktop => "desktop",
         }
     }
 
     pub fn file_name(self) -> &'static str {
         match self {
             Output::Touchbar => "touchbar.json",
+            Output::Desktop => "desktop.json",
         }
     }
 
     pub fn default_config(self) -> (&'static str, &'static str) {
         match self {
             Output::Touchbar => ("touchbar.default.json", include_str!("../touchbar.default.json")),
+            Output::Desktop => ("desktop.default.json", include_str!("../desktop.default.json")),
+        }
+    }
+
+    pub fn parse_config(self, source: &str) -> Result<Config, String> {
+        match self {
+            Output::Touchbar => Config::parse(source),
+            Output::Desktop => Config::parse_desktop(source),
         }
     }
 
     /// Why a widget can't be shown on this output, if it can't.
-    pub fn unsupported(self, _kind: WidgetKind, _spec: &Spec) -> Option<&'static str> {
+    pub fn unsupported(self, kind: WidgetKind, spec: &Spec) -> Option<&'static str> {
         match self {
             Output::Touchbar => None, // the Touch Bar shows every widget kind
+            // Esc and F-keys are keyboard keys; the desktop has a keyboard.
+            Output::Desktop => (kind == WidgetKind::Esc || kind == WidgetKind::Button && spec.contains_key("key"))
+                .then_some("Touch Bar only"),
         }
     }
 }

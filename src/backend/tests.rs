@@ -43,13 +43,23 @@ fn parse(lines: Vec<String>) -> Vec<Value> {
 
 /// Connect a session and say hello; returns it and the generation.
 fn hello(b: &mut Backend) -> (u64, u64) {
+    let (id, snapshot) = hello_as(b, "touchbar");
+    (id, snapshot["config"]["generation"].as_u64().unwrap())
+}
+
+/// Connect a session for `output`; returns it and its first snapshot.
+fn hello_as(b: &mut Backend, output: &str) -> (u64, Value) {
     let id = b.connect();
-    b.handle_line(id, r#"{"type":"hello","id":1,"protocol":1,"output":"touchbar","client":"test"}"#, now());
-    let msgs = parse(b.drain(id, now()));
+    b.handle_line(id, &json!({"type":"hello","id":1,"protocol":1,"output":output,"client":"test"}).to_string(), now());
+    let mut msgs = parse(b.drain(id, now()));
     assert_eq!(msgs[0], json!({"type":"ack","id":1}));
     assert_eq!(msgs[1]["type"], "welcome");
     assert_eq!(msgs[2]["type"], "snapshot");
-    (id, msgs[2]["config"]["generation"].as_u64().unwrap())
+    (id, msgs.remove(2))
+}
+
+fn code(m: &Value) -> String {
+    m["code"].as_str().unwrap().to_string()
 }
 
 fn request(b: &mut Backend, id: u64, msg: Value) -> Value {
@@ -155,7 +165,6 @@ fn malformed_requests() {
     ]}}));
     let mut b = dir.backend();
     let id = b.connect();
-    let code = |m: &Value| m["code"].as_str().unwrap().to_string();
     for (line, expected) in [
         ("not json", "bad_message"),
         ("[1,2]", "bad_message"),
@@ -170,7 +179,7 @@ fn malformed_requests() {
     assert!(!b.closing(id));
 
     for hello in [r#"{"type":"hello","id":1,"protocol":2,"output":"touchbar"}"#,
-                  r#"{"type":"hello","id":1,"protocol":1,"output":"desktop"}"#] {
+                  r#"{"type":"hello","id":1,"protocol":1,"output":"wall"}"#] {
         let other = b.connect();
         b.handle_line(other, hello, now());
         let msgs = parse(b.drain(other, now()));
@@ -250,6 +259,64 @@ fn config_reload_sends_snapshot_and_ends_presses() {
     assert_eq!(snapshot["config"]["generation"], generation + 1);
     assert!(snapshot["config"]["error"].is_string());
     assert_eq!(snapshot["widgets"].as_array().unwrap().len(), 2);
+}
+
+#[test]
+fn desktop_default_and_settings() {
+    let dir = Dir::new("desktop-default");
+    let mut b = dir.backend();
+    let (_, snapshot) = hello_as(&mut b, "desktop");
+    assert_eq!(snapshot["config"]["path"], "<built-in desktop.default.json>");
+    assert_eq!(snapshot["settings"]["colors"], json!({}));
+    assert_eq!(snapshot["settings"]["monitors"], json!([]));
+    assert_eq!(snapshot["settings"]["height"], Value::Null);
+    let kinds: Vec<&str> = snapshot["widgets"].as_array().unwrap().iter().map(|w| w["kind"].as_str().unwrap()).collect();
+    assert_eq!(kinds, ["media", "graph", "graph", "agents"]);
+
+    fs::write(dir.0.join("desktop.json"), json!({
+        "version": 1, "colors": {"background": "#102030"}, "font": "Iosevka", "monitor": "DP-1", "height": 32,
+        "left": [{"id": "glance.esc"}, {"id": "f1", "type": "button", "key": "f1"},
+                 {"id": "go", "type": "button", "label": "go", "exec": "true"}],
+    }).to_string()).unwrap();
+    let mut b = dir.backend();
+    let (id, snapshot) = hello_as(&mut b, "desktop");
+    let settings = &snapshot["settings"];
+    assert_eq!((&settings["colors"], &settings["font"], &settings["monitors"], &settings["height"]),
+               (&json!({"background": "#102030"}), &json!("Iosevka"), &json!(["DP-1"]), &json!(32.0)));
+    let widgets = snapshot["widgets"].as_array().unwrap();
+    for w in &widgets[..2] {
+        assert_eq!((&w["supported"], &w["reason"], &w["action"]), (&json!(false), &json!("Touch Bar only"), &Value::Null));
+    }
+    assert_eq!(widgets[2]["key"], "default.left.2");
+    assert_eq!(widgets[2]["action"], json!({"press": true, "repeat": false}));
+    let generation = snapshot["config"]["generation"].as_u64().unwrap();
+    let press = json!({"type":"press","id":2,"generation":generation,"widget":"default.left.0","pointer":1});
+    assert_eq!(code(&request(&mut b, id, press)), "not_pressable");
+}
+
+#[test]
+fn invalid_desktop_config_leaves_the_touch_bar_alone() {
+    let dir = Dir::new("desktop-invalid");
+    dir.write_config(json!({"default": {"left": [{"id": "glance.spacer"}]}}));
+    for (bad, why) in [(json!({"version": 1, "layers": {"default": {}}}), "has no layers"),
+                       (json!({"version": 1, "colors": {"key": "#000000"}}), "isn't a desktop colour"),
+                       (json!({"version": 1, "colors": {"background": "red"}}), "must be"),
+                       (json!({"version": 1, "monitor": 3}), "monitor"),
+                       (json!({"version": 1, "height": 1000}), "height")] {
+        fs::write(dir.0.join("desktop.json"), bad.to_string()).unwrap();
+        let mut b = dir.backend();
+        let (tb, tb_generation) = hello(&mut b);
+        let (_, snapshot) = hello_as(&mut b, "desktop");
+        let error = snapshot["config"]["error"].as_str().unwrap();
+        assert!(error.contains(why), "{error}");
+        assert_eq!(snapshot["config"]["path"], "<built-in desktop.default.json>");
+        // The Touch Bar's session sees nothing of it.
+        assert!(parse(b.drain(tb, now())).iter().all(|m| m["type"] != "snapshot"));
+        b.handle_line(tb, r#"{"type":"resync","id":3}"#, now());
+        let msgs = parse(b.drain(tb, now()));
+        let tb_snapshot = msgs.iter().find(|m| m["type"] == "snapshot").unwrap();
+        assert_eq!(tb_snapshot["config"], json!({"generation": tb_generation, "path": dir.0.join("touchbar.json").display().to_string(), "error": null}));
+    }
 }
 
 #[test]

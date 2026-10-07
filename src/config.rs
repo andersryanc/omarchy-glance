@@ -115,14 +115,48 @@ pub struct Config {
     /// (layer, section, widget specs) in layer then section order.
     pub layers: Vec<(Layer, &'static str, Vec<Spec>)>,
     pub has_fn: bool,
+    /// desktop.json's own settings; empty for the Touch Bar.
+    pub desktop: Desktop,
+}
+
+/// The desktop row's settings. Colours and font override the host theme
+/// only where given.
+#[derive(Default)]
+pub struct Desktop {
+    pub colors: Spec,
+    pub font: Option<String>,
+    pub monitors: Vec<String>, // empty: every monitor
+    pub height: Option<f64>,   // None: the bar's height
+}
+
+pub const DESKTOP_COLORS: [&str; 5] = ["background", "foreground", "accent", "urgent", "muted"];
+
+fn sections(obj: &Spec, at: &str) -> Result<Vec<(&'static str, Vec<Spec>)>, String> {
+    let mut out = vec![];
+    for section in SECTIONS {
+        let items = match obj.get(section) {
+            None | Some(Value::Null) => vec![],
+            Some(Value::Array(a)) if a.iter().all(Value::is_object) => {
+                a.iter().map(|i| i.as_object().unwrap().clone()).collect()
+            }
+            Some(_) => return Err(format!(r#""{at}{section}" must be a list of objects"#)),
+        };
+        out.push((section, items));
+    }
+    Ok(out)
+}
+
+fn version_1(source: &str) -> Result<Spec, String> {
+    let data: Value = serde_json::from_str(source).map_err(|e| e.to_string())?;
+    match data {
+        Value::Object(d) if d.get("version").and_then(Value::as_i64) == Some(1) => Ok(d),
+        _ => Err(r#"expected an object with "version": 1"#.into()),
+    }
 }
 
 impl Config {
     pub fn parse(source: &str) -> Result<Config, String> {
-        let data: Value = serde_json::from_str(source).map_err(|e| e.to_string())?;
-        let Some(data) = data.as_object().filter(|d| d.get("version").and_then(Value::as_i64) == Some(1)) else {
-            return Err(r#"expected an object with "version": 1"#.into());
-        };
+        let data = &version_1(source)?;
         let empty = Spec::new();
         let obj = |k: &str| data.get(k).and_then(Value::as_object).unwrap_or(&empty);
         let (debug, colors) = (obj("debug"), obj("colors"));
@@ -137,14 +171,7 @@ impl Config {
                 Some(Value::Object(o)) => o,
                 Some(_) => return Err(format!(r#"layer "{name}" must be an object"#)),
             };
-            for section in SECTIONS {
-                let items = match layer_obj.get(section) {
-                    None | Some(Value::Null) => vec![],
-                    Some(Value::Array(a)) if a.iter().all(Value::is_object) => {
-                        a.iter().map(|i| i.as_object().unwrap().clone()).collect()
-                    }
-                    Some(_) => return Err(format!(r#""layers.{name}.{section}" must be a list of objects"#)),
-                };
+            for (section, items) in sections(layer_obj, &format!("layers.{name}."))? {
                 out.push((layer, section, items));
             }
         }
@@ -167,6 +194,71 @@ impl Config {
             repeat_interval: num(data, "repeatInterval", 0.12).max(0.03),
             layers: out,
             has_fn,
+            desktop: Desktop::default(),
+        })
+    }
+
+    /// desktop.json: one row of left/center/right at the top level, the
+    /// repeat timing, and optional overrides of the host theme, monitors
+    /// and height. Touch Bar presentation settings don't apply.
+    pub fn parse_desktop(source: &str) -> Result<Config, String> {
+        let data = &version_1(source)?;
+        if data.contains_key("layers") {
+            return Err(r#"desktop.json has no layers: put "left", "center" and "right" at the top level"#.into());
+        }
+        let layers = sections(data, "")?.into_iter().map(|(s, items)| (Layer::Default, s, items)).collect();
+        let mut colors = Spec::new();
+        match data.get("colors") {
+            None | Some(Value::Null) => {}
+            Some(Value::Object(c)) => {
+                for (k, v) in c {
+                    if !DESKTOP_COLORS.contains(&k.as_str()) {
+                        return Err(format!(r#""colors.{k}" isn't a desktop colour (use {})"#, DESKTOP_COLORS.join(", ")));
+                    }
+                    if hex_rgb(Some(v), [-1.0; 3])[0] < 0.0 {
+                        return Err(format!(r##""colors.{k}" must be "#rrggbb""##));
+                    }
+                    colors.insert(k.clone(), v.clone());
+                }
+            }
+            Some(_) => return Err(r#""colors" must be an object"#.into()),
+        }
+        let font = match data.get("font") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(s)) if !s.is_empty() => Some(s.clone()),
+            Some(_) => return Err(r#""font" must be a font family name"#.into()),
+        };
+        let monitors = match data.get("monitor") {
+            None | Some(Value::Null) => vec![],
+            Some(Value::String(s)) => vec![s.clone()],
+            Some(Value::Array(a)) if a.iter().all(Value::is_string) => {
+                a.iter().map(|m| m.as_str().unwrap().to_string()).collect()
+            }
+            Some(_) => return Err(r#""monitor" must be a monitor name or a list of names"#.into()),
+        };
+        let height = match data.get("height") {
+            None | Some(Value::Null) => None,
+            Some(Value::Number(n)) if n.as_f64().is_some_and(|h| (10.0..=200.0).contains(&h)) => n.as_f64(),
+            Some(_) => return Err(r#""height" must be a number of pixels from 10 to 200"#.into()),
+        };
+        Ok(Config {
+            debug_background: false,
+            test_pattern: false,
+            border: false,
+            background: rgb(0, 0, 0),
+            debug_bg: rgb(0, 0, 0),
+            debug_bg_fn: rgb(0, 0, 0),
+            key: rgb(0, 0, 0),
+            key_pressed: rgb(0, 0, 0),
+            text: rgb(0, 0, 0),
+            urgent: rgb(0, 0, 0),
+            font: String::new(),
+            idle_dim: 0.0,
+            repeat_delay: num(data, "repeatDelay", 0.4),
+            repeat_interval: num(data, "repeatInterval", 0.12).max(0.03),
+            layers,
+            has_fn: false,
+            desktop: Desktop { colors, font, monitors, height },
         })
     }
 }

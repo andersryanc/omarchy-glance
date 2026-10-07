@@ -35,7 +35,8 @@ waiting for a yes or no.
       clicks/focus, fractional scaling and hotplug still to check by hand.
 - [ ] Stage 3: desktop renderer for machines without a Touch Bar (T07–T11).
       T07 (QML client and host contract, `desktop/`) done 2026-10-07; a first
-      panel plugin (T10) shows the row under the bar.
+      panel plugin (T10) shows the row under the bar; T08 (`desktop.json`)
+      done the same day.
 
 ## Bugs
 

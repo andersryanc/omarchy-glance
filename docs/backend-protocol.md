@@ -80,7 +80,7 @@ connection as a whole.
 | `bad_message` | no | Not valid JSON, not an object, missing or wrong-typed fields, or unknown type |
 | `too_large` | yes | Line over 1 MiB |
 | `unsupported_protocol` | yes | The client's protocol major isn't 1 |
-| `unsupported_output` | yes | The `output` isn't one this backend serves (`desktop` arrives with T08) |
+| `unsupported_output` | yes | The `output` isn't `touchbar` or `desktop` |
 | `not_ready` | no | A request before `hello` |
 | `unknown_widget` | no | No such widget key in the client's current config generation |
 | `stale_config` | no | The request names an older config generation |
@@ -150,7 +150,12 @@ backend replaces an overflowing update queue.
 - `settings`: output-level presentation settings from the config, so clients
   never parse config files. The backend applies `repeatDelay` and
   `repeatInterval` to backend actions; they're in `settings` too for the keys
-  a Touch Bar client repeats itself.
+  a Touch Bar client repeats itself. The desktop output's settings are
+  `{"colors": {...}, "font", "monitors": [...], "height", "repeatDelay",
+  "repeatInterval", "hasFn": false}`, where `colors` holds only the
+  `desktop.json` overrides (any of `background`, `foreground`, `accent`,
+  `urgent`, `muted`), `font` and `height` are `null` unless set, and
+  `monitors` is empty for every monitor: the host theme fills in the rest.
 - `widgets`: in config order: layer, then section, then position.
 
 Widget fields:
@@ -352,7 +357,7 @@ the whole sequence without exiting, so t1bridge keeps using it.
 ### Unsupported widget
 
 `desktop.json` lists `glance.esc`. The backend logs once at load,
-`desktop.json: layers.default.left[0]: glance.esc is not supported on desktop`,
+`desktop.json: left[0]: glance.esc is not supported on desktop (Touch Bar only)`,
 and the snapshot carries it so positions and keys stay consistent:
 
 ```text

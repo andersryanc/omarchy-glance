@@ -7,10 +7,11 @@ use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use crate::config::{DEFAULT_CONFIG, user_config};
+use crate::config::user_config;
+use crate::protocol::Output;
 
 pub const USAGE: &str =
-    "usage: omarchy-glance on|off|restart|status|log|config [edit]|backend|touchbar|preview out.png [fn]";
+    "usage: omarchy-glance on|off|restart|status|log|config [desktop] [edit]|backend|touchbar|preview out.png [fn]";
 
 const BACKEND: &str = "omarchy-glance.service";
 const SOCKET: &str = "omarchy-glance.socket";
@@ -105,12 +106,14 @@ fn status() -> Result<(), String> {
     Ok(())
 }
 
-/// Create the user config from the default if needed; the backend reloads it on save.
-fn config(edit: bool) -> Result<(), String> {
-    let path = user_config();
+/// Create an output's user config from its default if needed; the backend
+/// reloads it on save.
+fn config(output: Output, edit: bool) -> Result<(), String> {
+    let path = user_config().with_file_name(output.file_name());
     if !path.exists() {
+        let default = output.default_config().1;
         fs::create_dir_all(path.parent().unwrap()).map_err(|e| format!("{}: {e}", path.display()))?;
-        fs::write(&path, DEFAULT_CONFIG).map_err(|e| format!("{}: {e}", path.display()))?;
+        fs::write(&path, default).map_err(|e| format!("{}: {e}", path.display()))?;
         println!("created {} from the default", path.display());
     }
     if edit {
@@ -133,7 +136,11 @@ pub fn run(args: &[String]) -> Option<Result<(), String>> {
             "journalctl: {}",
             Command::new("journalctl").args(["--user", "-u", "t1-touchbar", "-u", BACKEND, "-f"]).exec()
         )),
-        "config" => config(second == Some("edit")),
+        "config" => {
+            let desktop = second == Some("desktop");
+            let edit = args.get(if desktop { 2 } else { 1 }).map(String::as_str) == Some("edit");
+            config(if desktop { Output::Desktop } else { Output::Touchbar }, edit)
+        }
         _ => return None,
     })
 }

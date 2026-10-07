@@ -2,7 +2,8 @@
 // $XDG_RUNTIME_DIR/omarchy-glance/backend.sock (docs/backend-protocol.md).
 // It keeps the latest snapshot and widget states, sends input and demand,
 // and reconnects with the same backoff as the Touch Bar client. It draws
-// nothing; GlanceRow.qml shows its state.
+// nothing; GlanceRow.qml shows its state. A host makes one per output and
+// shares it between its rows: one session, whatever the number of screens.
 pragma ComponentBehavior: Bound
 import QtQuick
 import Quickshell
@@ -45,6 +46,10 @@ Scope {
   property var pending: ({}) // request id -> {key, pointer}, for presses and activations
   property var down: ({}) // pointer -> widget key
   property int retryDelay: retryMin
+
+  // desktop.json's overrides of the host theme, else the host's value.
+  function color(name, fallback) { return settings.colors && settings.colors[name] ? settings.colors[name] : fallback }
+  function font(fallback) { return settings.font || fallback }
 
   function stateOf(key) { return states[key] ?? {} }
   function isDown(pointer) { return down[pointer] !== undefined }

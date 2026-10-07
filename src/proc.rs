@@ -41,8 +41,14 @@ pub fn shell(cmd: &str, piped: bool) -> io::Result<Child> {
     popen(&["bash", "-c", cmd], piped)
 }
 
+/// Kill a child's whole process group (its session, from setsid), so a
+/// shell's own children go with it. Launched apps are never killed.
+pub fn kill_group(child: &Child) {
+    unsafe { libc::kill(-(child.id() as libc::pid_t), libc::SIGKILL) };
+}
+
 pub fn kill(mut child: Child) {
-    let _ = child.kill();
+    kill_group(&child);
     let _ = child.wait();
 }
 

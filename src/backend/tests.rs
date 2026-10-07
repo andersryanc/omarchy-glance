@@ -156,6 +156,54 @@ fn last_disconnect_stops_providers() {
     assert!(b.outputs.is_empty());
 }
 
+/// Wait for a command to write its background child's pid; then whether it lives.
+fn child_pid(pidfile: &PathBuf) -> libc::pid_t {
+    let end = Instant::now() + Duration::from_secs(2);
+    loop {
+        if let Some(pid) = fs::read_to_string(pidfile).ok().and_then(|s| s.trim().parse().ok()) {
+            return pid;
+        }
+        assert!(Instant::now() < end, "the command never started");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn alive(pid: libc::pid_t) -> bool {
+    // Orphaned by the killed shell, it may take a moment to be reaped.
+    for _ in 0..100 {
+        if unsafe { libc::kill(pid, 0) } != 0 {
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    true
+}
+
+#[test]
+fn stopping_a_command_ends_its_children() {
+    let dir = Dir::new("tree");
+    let pidfile = dir.0.join("pid");
+    let exec = format!("sleep 30 & echo $! > {}; wait", pidfile.display());
+
+    // The last client leaves.
+    dir.write_config(json!({"default": {"left": [{"id": "tree", "type": "command", "exec": exec}]}}));
+    let mut b = dir.backend();
+    let (a, _) = hello(&mut b);
+    b.tick(now());
+    let pid = child_pid(&pidfile);
+    b.disconnect(a, now());
+    assert!(!alive(pid), "the command's child outlived it");
+
+    // The command times out.
+    fs::remove_file(&pidfile).unwrap();
+    let mut job = providers::Job::new(&exec, 0.0);
+    let t = now();
+    job.tick(t, "test");
+    let pid = child_pid(&pidfile);
+    assert!(job.tick(t + providers::COMMAND_TIMEOUT + 1.0, "test").is_some());
+    assert!(!alive(pid), "the timed-out command's child lives on");
+}
+
 #[test]
 fn malformed_requests() {
     let dir = Dir::new("malformed");

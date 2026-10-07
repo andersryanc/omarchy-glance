@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 
 use crate::config::{Spec, num, text};
 use crate::log;
-use crate::proc::{kill, popen, reap, shell};
+use crate::proc::{kill, kill_group, popen, reap, shell};
 use crate::sources::{self, Source};
 
 pub const COMMAND_TIMEOUT: f64 = 10.0; // kill a command widget's script after this long
@@ -89,8 +89,8 @@ impl Job {
     pub fn tick(&mut self, t: f64, what: &str) -> Option<String> {
         if self.proc.is_some() && t - self.started > COMMAND_TIMEOUT {
             log(&format!("{what}: command timed out"));
-            if let Some(p) = self.proc.as_mut() {
-                let _ = p.kill();
+            if let Some(p) = self.proc.as_ref() {
+                kill_group(p);
             }
             return Some(self.finish());
         }

@@ -38,7 +38,7 @@ Item {
     btop: btop.colors
     agentIcons: "file:///usr/share/omarchy/shell/plugins/agents/assets/"
     fontFamily: glanceClient.font(root.bar && root.bar.fontFamily ? root.bar.fontFamily : Style.font.family)
-    fontSize: Style.font.subtitle
+    fontSize: Style.font.body
   }
 
   // desktop.json's "monitor": the named screens, or every screen.

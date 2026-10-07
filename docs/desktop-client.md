@@ -47,7 +47,7 @@ PanelWindow {
 | --- | --- | --- |
 | `background`, `foreground`, `accent`, `urgent`, `muted` | Palette | `Color.*` |
 | `fill`, `hoverFill`, `pressedFill` | A control's face (no border), hovered and pressed | `Style.normalFill`, `Style.hoverFill`, `Style.pressedFill` |
-| `fontFamily`, `fontSize` | Family and base size in logical pixels | `shell.bar.fontFamily`, the `Style` type scale |
+| `fontFamily`, `fontSize` | Family and base size in logical pixels | `shell.bar.fontFamily`, `Style.font.body` (12) |
 | `scale` | Multiplier for sizes inside the row (padding, gaps, widths), on top of the screen's device pixel ratio, which Qt applies already | 1, or from `Style` |
 | `transparent` | Draw no row background; the host's surface shows through | `bar.transparent` from `shell.json` |
 | `shown` | Whether the row is shown. A hidden row keeps its connection and sends `view` with `shown: false`, so the backend stops providers only it needs | The host's own visibility (e.g. fullscreen) |

@@ -156,7 +156,10 @@ two polls (about 20–40 ms) before it hides, which can't be avoided because
 nothing announces the bar's close in advance. It fills its `GlanceHost` from `Color.bar.*`, `Color.*`, `Style` fills and the
 bar's font, under `desktop.json`'s overrides. It shows a row on the
 monitors `desktop.json` names (every monitor by default), as tall as its
-`height` or 1.5 times the bar (39 px).
+`height` or 1.5 times the bar (39 px). Its client is `shown` while at least
+one of those monitors is attached, so with none (a named monitor unplugged)
+the backend stops the mic capture and media polling; the brief unmap while
+the bar is recreated doesn't count.
 
 `omarchy-glance desktop on` installs it: the plugin files are compiled into
 the binary (`PLUGIN_FILES` in `src/cli.rs`, checked against `desktop/` by a

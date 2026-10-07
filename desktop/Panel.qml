@@ -21,8 +21,12 @@ Item {
   function open(payloadJson) {}
   function close() {}
 
-  // One session for every screen's row.
-  GlanceClient { id: glanceClient }
+  // One session for every screen's row. It's shown while a selected monitor
+  // is attached; the brief unmap while the bar is recreated doesn't count.
+  GlanceClient {
+    id: glanceClient
+    shown: root.screens.length > 0
+  }
   BtopTheme { id: btop }
 
   readonly property int rowHeight: glanceClient.settings.height || Math.round(1.5 * Style.bar.sizeHorizontal) // 1.5 times the bar, unless desktop.json says

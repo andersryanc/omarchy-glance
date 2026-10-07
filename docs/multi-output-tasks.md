@@ -234,15 +234,20 @@ window. Dependencies: T08.
 
 ### T10 — Placement and theme
 
-- [ ] Implement the host chosen in T06 with monitor selection and height.
-- [ ] Follow the live theme palette and font; follow supported bar state
+- [x] Implement the host chosen in T06 with monitor selection and height.
+- [x] Follow the live theme palette and font; follow supported bar state
   (hidden, size, position) where the host provides it.
-- [ ] Document behavior when the bar moves, hides, or is absent, and remaining
+- [x] Document behavior when the bar moves, hides, or is absent, and remaining
   gaps.
 
-Started early on 2026-10-07 (the user asked to see the row in place):
-`desktop/manifest.json` and `Panel.qml` put the row under the bar on every
-screen with the live theme ([desktop-client.md](desktop-client.md#panel-plugin)).
+Started early on 2026-10-07 (the user asked to see the row in place) and
+done the same day: `desktop/manifest.json` and `Panel.qml`, with monitor and
+height from `desktop.json`, the live theme (a theme switch, light and dark,
+applies without a backend restart), the bar's transparency, and the
+behaviour with the bar hidden, moved or absent documented in
+[desktop-client.md](desktop-client.md#behaviour-with-the-bar). Windows sit
+below both rows, and disabling the plugin releases the space. Untested: a
+second monitor and hotplug (one monitor here).
 
 Acceptance: normal tiled and maximized windows sit below both rows on the
 selected monitor; other monitors are unaffected; theme changes apply without a

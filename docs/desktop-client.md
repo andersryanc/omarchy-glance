@@ -162,9 +162,32 @@ omarchy-shell shell setPluginEnabled glance.row true   # false to remove it
 
 The shell notices changed files and reloads its plugins, but a running
 shell keeps the plugin's first compiled version, so edits only take effect
-after `omarchy-restart-shell`. Still for T10: transparency, following the
-bar when it hides or moves, and monitor hotplug
-([desktop-hosts.md](desktop-hosts.md)).
+after `omarchy-restart-shell`.
+
+### Behaviour with the bar
+
+Checked 2026-10-07 on one monitor (`hyprctl layers` and `hyprctl monitors`):
+
+| Bar | Row | Reserved at the top |
+| --- | --- | --- |
+| Top (default) | Under the bar | bar + row (26 + 39 px); tiled and maximised windows start below both |
+| Hidden (`omarchy-toggle-bar`) | At the top of the screen | row only (39 px); back under the bar when it's shown |
+| At the bottom (`omarchy bar position bottom`) | Stays at the top: the first release is a top row only | row at the top, bar at the bottom |
+| Transparent (`bar.transparent` in `~/.config/omarchy/shell.json`) | No row background, faces keep their fill; text in the colour `omarchy-bar-text-color` picks for the wallpaper behind both rows, as the bar does | unchanged |
+| Absent (another bar plugin, or none) | At the top of the screen, as when hidden | row only |
+| Scale change, shell restart | Hides while the bar is recreated, then maps under it | unchanged |
+| Plugin disabled | Gone | bar only (26 px) |
+
+Transparency isn't in the plugin facade, so the plugin reads `shell.json`
+itself and re-picks the text colour when transparency, the theme's bar text
+colour or the row height changes (not when only the wallpaper changes, like
+the bar). Muted text (reset times, "No media") can be faint on a busy
+wallpaper.
+
+Remaining gaps: monitor hotplug and a second monitor are untested (one
+monitor here; each screen gets its own window through `Variants`, and the
+row on a monitor not named in `desktop.json` isn't created); the row can't
+follow the bar to the bottom or the sides; a vertical bar isn't handled.
 
 ## Development host
 

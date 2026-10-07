@@ -5,6 +5,7 @@
 import QtQuick
 import Quickshell
 import Quickshell.Hyprland
+import Quickshell.Io
 import Quickshell.Wayland
 import qs.Commons
 import "glance"
@@ -24,11 +25,58 @@ Item {
   GlanceClient { id: glanceClient }
   BtopTheme { id: btop }
 
+  readonly property int rowHeight: glanceClient.settings.height || Math.round(1.5 * Style.bar.sizeHorizontal) // 1.5 times the bar, unless desktop.json says
+
+  // The bar's transparency isn't in the plugin facade: read it from
+  // shell.json as the bar does, and pick legible text the way the bar does,
+  // with omarchy-bar-text-color over the strip both rows cover.
+  property bool transparent: false
+  property string transparentText: ""
+  FileView {
+    path: Quickshell.env("HOME") + "/.config/omarchy/shell.json"
+    watchChanges: true
+    printErrors: false
+    onFileChanged: reload()
+    onLoaded: {
+      try {
+        const bar = JSON.parse(text()).bar
+        root.transparent = !!bar && bar.transparent === true
+      } catch (e) {
+        // keep the last value while the file is mid-edit
+      }
+    }
+    onLoadFailed: root.transparent = false
+  }
+  Process {
+    id: textColor
+    stdout: SplitParser {
+      onRead: line => { if (/^#[0-9A-Fa-f]{6}$/.test(line.trim())) root.transparentText = line.trim() }
+    }
+  }
+  Timer {
+    id: textColorTimer
+    interval: 120
+    onTriggered: {
+      if (!root.transparent) { root.transparentText = ""; return }
+      const barSize = root.bar && root.bar.barSize > 0 ? root.bar.barSize : Style.bar.sizeHorizontal
+      textColor.command = ["omarchy-bar-text-color", "top", String(barSize + root.rowHeight),
+                           String(Color.bar.text), String(Color.background)]
+      textColor.running = true
+    }
+  }
+  onTransparentChanged: textColorTimer.restart()
+  onRowHeightChanged: textColorTimer.restart()
+  Connections {
+    target: Color.bar
+    function onTextChanged() { textColorTimer.restart() }
+  }
+
   // The live theme, with desktop.json's overrides on top.
   GlanceHost {
     id: env
+    transparent: root.transparent
     background: glanceClient.color("background", Color.bar.background)
-    foreground: glanceClient.color("foreground", Color.bar.text)
+    foreground: glanceClient.color("foreground", root.transparent && root.transparentText ? root.transparentText : Color.bar.text)
     accent: glanceClient.color("accent", Color.accent)
     urgent: glanceClient.color("urgent", Color.urgent)
     muted: glanceClient.color("muted", Color.muted)
@@ -84,7 +132,7 @@ Item {
       // The first release is a top row only; it stays at the top when the
       // bar moves to another edge or hides.
       anchors { top: true; left: true; right: true }
-      implicitHeight: glanceClient.settings.height || Math.round(1.5 * Style.bar.sizeHorizontal) // 1.5 times the bar, unless desktop.json says
+      implicitHeight: root.rowHeight
       exclusionMode: ExclusionMode.Auto
       WlrLayershell.namespace: "omarchy-glance"
       WlrLayershell.layer: WlrLayer.Top

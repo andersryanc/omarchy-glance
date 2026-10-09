@@ -40,6 +40,12 @@ waiting for a yes or no.
       day; T11 (`omarchy-glance desktop on`, dependencies, smoke check) too,
       except a run on a machine without a Touch Bar (none at hand yet).
 
+### T2 MacBook Touch Bar ([tasks](docs/t2-touchbar-tasks.md))
+
+- [ ] Run the Touch Bar client on T2 MacBook Pros (16-inch 2019 first)
+      through the kernel's `appletbdrm` and evdev devices (H00–H09). On hold
+      until Omarchy is installed on the T2 machine; planned 2026-10-09.
+
 ## Bugs
 
 - [x] Agents widget, `"layout": "row"`: a narrow `meterWidth` (e.g. 110) made

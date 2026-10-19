@@ -41,26 +41,51 @@ Touch Bar daemon: [tiny-dfr](https://github.com/AsahiLinux/tiny-dfr).
 
 ### H00 — Prepare the T2 machine
 
-- [ ] Confirm the model (About This Mac shows "MacBook Pro (16-inch, 2019)").
-  The A2141 isn't in Omarchy's manual list of T2 models (checked 2026-10-09),
-  but the installer detects T2 by PCI ID (`106b:1801`/`1802`), so it should
-  still take the T2 path. Check the manual again and `#omarchy-on-other` on
-  Discord for reports on this model.
-- [ ] **Save the Wi-Fi/Bluetooth firmware before wiping macOS.**
+- [x] Confirm the model: `MacBookPro16,1` (16-inch, 2019), T2 firmware
+  `22P1072`, macOS 15.1 (2026-10-18).
+- [ ] The A2141 isn't in Omarchy's manual list of T2 models (checked
+  2026-10-09), but the installer detects T2 by PCI ID (`106b:1801`/`1802`), so
+  it should still take the T2 path. Check the manual again and
+  `#omarchy-on-other` on Discord for reports on this model.
+- [x] **Save the Wi-Fi/Bluetooth firmware before wiping macOS** (2026-10-18).
   `apple-bcm-firmware-fetcher` reads it from an on-disk macOS volume. A
   single-boot install that erases macOS finds nothing, and the T2 then has no
-  Wi-Fi. In macOS, download the t2linux script
-  (<https://wiki.t2linux.org/tools/firmware.sh>), run `bash firmware.sh` and
-  choose method 2, which writes `~/Downloads/firmware.tar`. Not method 1: it
-  stores the firmware on the EFI partition, which the install recreates. Copy
-  the tarball off the machine, next to the T1 machine's backups. Install it
-  on Linux as the "On Linux" section of
-  <https://wiki.t2linux.org/guides/wifi-bluetooth/> describes. Keep a wired
-  Ethernet or USB tethering option ready anyway.
+  Wi-Fi. The t2linux script's method 2 (`firmware.sh create_archive`) needs
+  the Xcode command line tools for Python and stopped without them, so the
+  raw tree was saved instead (`tar -cf usr-share-firmware-raw.tar -C
+  /usr/share/firmware .`, 49 MB, BCM4364 Wi-Fi and Bluetooth files). It's on
+  the backup drive in `omarchy/t2-macbookpro16-2026-10-18/` with a copy of
+  `firmware.sh` and `SHA256SUMS`. On Linux, rename and install it:
+  `mkdir fw && tar -xf usr-share-firmware-raw.tar -C fw`, then
+  `bash firmware.sh rename_only fw firmware.tar`, then
+  `sudo tar -xf firmware.tar -C /lib/firmware/brcm`, then reload the drivers as
+  the "On Linux" section of <https://wiki.t2linux.org/guides/wifi-bluetooth/>
+  describes. If the tarball is lost, the script's recovery-image method
+  fetches the firmware from Apple on Linux, which needs a wired or tethered
+  connection. Keep one ready anyway.
+- [x] Save how macOS sees the hardware, for H01: `ioreg -l -w0`,
+  `system_profiler` (hardware, iBridge, USB, displays, Wi-Fi, Bluetooth),
+  `sw_vers` and `diskutil`, in `hardware/` in the same backup folder.
+- [ ] Optionally install the latest macOS update first. Firmware updates for
+  the T2 and the Mac's boot firmware only come through macOS, so whatever is
+  installed at wipe time stays.
 - [ ] In macOS Recovery (Cmd-R), open Startup Security Utility and set Secure
   Boot to "No Security" and "Allow booting from external media".
 - [ ] Optionally do a full macOS backup or a macOS install on an external drive
   first, as was done for the T1 machine.
+
+Unlike the T1, the T2 needs nothing from the EFI partition. The T1 loads its
+firmware from `EFI/APPLE/EMBEDDEDOS/combined.memboot` at every power-on and
+Touch ID needs `EMBEDDEDOS/FDRData` ([nohzafk-README.md](nohzafk-README.md),
+[t1bridge-README.md](t1bridge-README.md)). The T2 boots bridgeOS from its own
+Boot ROM and storage before the Intel CPU starts
+([Apple](https://support.apple.com/guide/security/boot-process-sec5d0fab7c6/web)),
+and bridgeOS drives the Touch Bar. On this machine `disk0s1` (315 MB FAT32,
+4096-byte sectors, which macOS fails to mount) held only
+`EFI/APPLE/UPDATERS/MULTIUPDATER` (an old firmware updater), two boot logs
+and an empty `CACHES` folder; no `EMBEDDEDOS`. A raw image
+(`efi-disk0s1.img`) is in the backup folder anyway; it isn't needed to
+restore anything.
 
 Acceptance: firmware saved off the machine; the USB installer boots.
 Dependencies: none.
